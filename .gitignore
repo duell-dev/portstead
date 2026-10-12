@@ -1,0 +1,9 @@
+.tooling/
+.local/
+target/
+node_modules/
+dist/
+*.log
+playwright-report/
+test-results/
+src-tauri/gen/
