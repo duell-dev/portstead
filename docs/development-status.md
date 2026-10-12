@@ -27,7 +27,7 @@ The local suite currently includes 18 Rust unit tests, six frontend unit tests, 
 
 ## Verified in CI
 
-The [initial CI workflow](https://github.com/duell-dev/portstead/actions/runs/38288202233) passed on Windows 2025 and Ubuntu 24.04 before the hierarchy/HTTP additions. Both jobs passed the frontend build, three frontend unit tests, browser smoke test, Rust formatting and Clippy checks, 15 Rust unit tests, and the full Tauri desktop build. The new features have been checked locally on Windows and need their own CI run. CI does not launch the native GUI or run authenticated remote sessions. The MCP keyring integration test is excluded from unattended CI and remains explicitly verified on Windows locally.
+The [hierarchy/HTTP CI workflow](https://github.com/duell-dev/portstead/actions/runs/38298379747) passed on Windows 2025 and Ubuntu 24.04. Both jobs passed the frontend build, six frontend unit tests, browser smoke test, Rust formatting and Clippy checks, 18 Rust unit tests, and the full Tauri desktop build. CI does not launch the native GUI or run authenticated remote sessions. The MCP keyring integration test is excluded from unattended CI and remains explicitly verified on Windows locally.
 
 ## Still to validate
 
