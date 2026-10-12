@@ -10,12 +10,75 @@ use portstead_core::{
     session::{Input, Size, Update},
     store::Store,
 };
-use std::{path::Path, sync::Arc};
-use tauri::State;
+use std::{
+    path::Path,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
+use tauri::{Manager, State, WebviewWindow};
 
 type Reply<T> = Result<T, String>;
 fn reply<T>(value: anyhow::Result<T>) -> Reply<T> {
     value.map_err(|e| format!("{e:#}"))
+}
+
+static NEXT_WEB_PAGE: AtomicU64 = AtomicU64::new(0);
+
+#[tauri::command]
+async fn open_management_page(
+    window: WebviewWindow,
+    engine: State<'_, Arc<Engine>>,
+    connection_id: String,
+    expected_target: Target,
+) -> Reply<String> {
+    let library = reply(engine.store.load())?;
+    let connection = reply(library.checked_connection(&connection_id, &expected_target))?;
+    let Target::Web { url } = &connection.target else {
+        return Err("Not a management page connection".into());
+    };
+    let url = reply(portstead_core::model::management_url(url))?;
+    let origin = url.origin();
+    let title = format!(
+        "{} · {} — Portstead",
+        connection.name,
+        origin.ascii_serialization()
+    );
+    let label = format!("web-page-{}", NEXT_WEB_PAGE.fetch_add(1, Ordering::Relaxed));
+    tauri::WebviewWindowBuilder::new(
+        window.app_handle(),
+        &label,
+        tauri::WebviewUrl::External(url),
+    )
+    .title(title)
+    .inner_size(1100.0, 780.0)
+    .parent(&window)
+    .map_err(|e| e.to_string())?
+    .incognito(true)
+    .on_navigation(move |url| {
+        url.origin() == origin && portstead_core::model::management_url(url.as_str()).is_ok()
+    })
+    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+    .build()
+    .map_err(|e| e.to_string())?;
+    Ok(label)
+}
+
+#[tauri::command]
+fn management_page_is_open(window: WebviewWindow, label: String) -> bool {
+    label.starts_with("web-page-") && window.get_webview_window(&label).is_some()
+}
+
+#[tauri::command]
+fn close_management_page(window: WebviewWindow, label: String) -> Reply<()> {
+    if !label.starts_with("web-page-") {
+        return Err("Not a management page window".into());
+    }
+    if let Some(page) = window.get_webview_window(&label) {
+        page.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -244,30 +307,45 @@ fn run() -> anyhow::Result<()> {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(engine.clone())
-        .invoke_handler(tauri::generate_handler![
-            load_library,
-            save_library,
-            import_library,
-            export_library,
-            import_kubeconfig,
-            auth_info,
-            forget_credential,
-            open_session,
-            session_poll,
-            session_write,
-            session_resize,
-            session_close,
-            desktop_frame,
-            desktop_input,
-            rdp_probe,
-            run_command,
-            operations_list,
-            operation_cancel,
-            enable_agents,
-            disable_agents
-        ])
+        .invoke_handler(|invoke| {
+            if invoke.message.webview_ref().label() != "main" {
+                invoke
+                    .resolver
+                    .reject("Device pages cannot invoke Portstead commands");
+                return true;
+            }
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                open_management_page,
+                management_page_is_open,
+                close_management_page,
+                load_library,
+                save_library,
+                import_library,
+                export_library,
+                import_kubeconfig,
+                auth_info,
+                forget_credential,
+                open_session,
+                session_poll,
+                session_write,
+                session_resize,
+                session_close,
+                desktop_frame,
+                desktop_input,
+                rdp_probe,
+                run_command,
+                operations_list,
+                operation_cancel,
+                enable_agents,
+                disable_agents
+            ];
+            handler(invoke)
+        })
         .build(tauri::generate_context!())?;
-    app.run(move |_, event| {
+    app.run(move |handle, event| {
+        if matches!(&event, tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } if label == "main") {
+            handle.exit(0);
+        }
         if let tauri::RunEvent::Exit = event {
             engine.shutdown();
         }

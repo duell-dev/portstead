@@ -3,11 +3,12 @@ export type Target =
   | { protocol: 'ssh'; host: string; username: string; port: number; identity_file: string | null }
   | { protocol: 'winrm'; host: string; username: string; domain: string; port: number; tls: boolean; auth: 'ntlm' | 'kerberos' }
   | { protocol: 'rdp'; host: string; username: string; domain: string; port: number; certificate_sha256: string | null }
-  | { protocol: 'kubernetes'; source: string; context: string; namespace: string };
+  | { protocol: 'kubernetes'; source: string; context: string; namespace: string }
+  | { protocol: 'web'; url: string };
 export interface Connection { id: string; name: string; group: string; agent_access: boolean; target: Target }
 export interface Pane { connection_id: string; title: string; entry_command: string }
-export interface Workspace { id: string; name: string; panes: Pane[] }
-export interface Library { version: number; revision: number; connections: Connection[]; workspaces: Workspace[] }
+export interface Workspace { id: string; name: string; group: string; panes: Pane[] }
+export interface Library { version: number; revision: number; connections: Connection[]; workspaces: Workspace[]; groups: string[] }
 export interface Credentials { username: string; domain: string; password: string; remember: boolean }
 export interface Update { data: number[]; status: string; error: string | null; dropped_bytes: number; prompt: { label: string; secret: boolean } | null }
 export interface Operation { id: string; connection_id: string; connection_name: string; target: Target; started_at: number; command: string; status: string; stdout: string; stderr: string; exit_code: number | null; truncated: boolean; actor: string }
@@ -16,8 +17,12 @@ export function describe(target: Target): string {
   switch (target.protocol) {
     case 'local': return target.shell || 'Default shell';
     case 'kubernetes': return `${target.context} · ${target.namespace || 'default'}`;
+    case 'web': return target.url;
     default: return `${'username' in target && target.username ? target.username + '@' : ''}${target.host}`;
   }
+}
+export function protocolLabel(target: Target): string {
+  return target.protocol === 'web' ? (new URL(target.url).protocol === 'http:' ? 'HTTP' : 'HTTPS') : target.protocol.toUpperCase();
 }
 export function defaultTarget(protocol: Target['protocol']): Target {
   switch (protocol) {
@@ -26,6 +31,7 @@ export function defaultTarget(protocol: Target['protocol']): Target {
     case 'winrm': return { protocol, host: '', username: '', domain: '', port: 5986, tls: true, auth: 'ntlm' };
     case 'rdp': return { protocol, host: '', username: '', domain: '', port: 3389, certificate_sha256: null };
     case 'kubernetes': return { protocol, source: '', context: '', namespace: 'default' };
+    case 'web': return { protocol, url: 'https://' };
   }
 }
 export function decodeFrame(buffer: ArrayBuffer): { width: number; height: number; sequence: number; pixels: Uint8ClampedArray<ArrayBuffer> } | null {

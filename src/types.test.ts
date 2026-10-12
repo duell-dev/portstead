@@ -1,5 +1,5 @@
 import { describe as suite, it, expect } from 'vitest';
-import { escapeHtml, decodeFrame, describe, defaultTarget } from './types';
+import { escapeHtml, decodeFrame, describe, defaultTarget, protocolLabel } from './types';
 suite('profile content and native desktop frames', () => {
   it('escapes untrusted names and commands before displaying markup', () => {
     expect(escapeHtml('<img src=x onerror="run()">')).toBe('&lt;img src=x onerror=&quot;run()&quot;&gt;');
@@ -14,5 +14,7 @@ suite('profile content and native desktop frames', () => {
   it('shows an explicit cluster and namespace and uses secure WinRM defaults', () => {
     expect(describe({ protocol: 'kubernetes', source: 'config', context: 'production', namespace: 'payments' })).toBe('production · payments');
     expect(defaultTarget('winrm')).toMatchObject({ tls: true, port: 5986 });
+    expect(protocolLabel({ protocol: 'web', url: 'HTTP://192.0.2.1' })).toBe('HTTP');
+    expect(protocolLabel({ protocol: 'web', url: 'https://moxa.example.invalid' })).toBe('HTTPS');
   });
 });

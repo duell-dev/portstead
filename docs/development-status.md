@@ -19,13 +19,15 @@ The source is published at [duell-dev/portstead](https://github.com/duell-dev/po
 | Kubernetes files | Independent context/namespace snapshots, relative certificate/key resolution, unchanged original source. Uses a fixture, not live clusters. |
 | Frontend behavior | TypeScript build, frame/escaping tests, and browser smoke checks for layouts, entry commands, connection editing, output escaping, themes, agent configuration and minimum window dimensions. Browser IPC is mocked. |
 | Native adapters | SSH, WinRM and embedded RDP code compile. |
+| Hierarchy navigation | Global/focused maps, nested descendants, breadcrumbs, folder creation/rename/move, keyboard selection, pan/zoom, tree search and small-window layouts pass browser checks. Folder transforms preserve targets and agent grants. |
+| HTTP management pages | A native private webview loads a frame-blocking localhost fixture, accepts form input, and denies profile-command access. Workspace and app closure are checked. This is not a test against Moxa hardware. |
 | RDP negotiation | The authorized test host responded; the untrusted issuer stopped TLS validation before authentication. No credential was sent and no remote desktop session was opened. |
 
-The local suite currently includes 15 Rust unit tests, three frontend unit tests, the explicit real MCP integration test, and the browser/native smoke scripts. Re-run the README checks after changes; this document is a dated record.
+The local suite currently includes 18 Rust unit tests, six frontend unit tests, the explicit real MCP integration test, and the browser/native smoke scripts. Re-run the README checks after changes; this document is a dated record.
 
 ## Verified in CI
 
-The [initial CI workflow](https://github.com/duell-dev/portstead/actions/runs/38288202233) passed on Windows 2025 and Ubuntu 24.04. Both jobs passed the frontend build, three frontend unit tests, browser smoke test, Rust formatting and Clippy checks, 15 Rust unit tests, and the full Tauri desktop build. CI does not launch the native GUI or run authenticated remote sessions. The MCP keyring integration test is excluded from unattended CI and remains explicitly verified on Windows locally.
+The [initial CI workflow](https://github.com/duell-dev/portstead/actions/runs/38288202233) passed on Windows 2025 and Ubuntu 24.04 before the hierarchy/HTTP additions. Both jobs passed the frontend build, three frontend unit tests, browser smoke test, Rust formatting and Clippy checks, 15 Rust unit tests, and the full Tauri desktop build. The new features have been checked locally on Windows and need their own CI run. CI does not launch the native GUI or run authenticated remote sessions. The MCP keyring integration test is excluded from unattended CI and remains explicitly verified on Windows locally.
 
 ## Still to validate
 
@@ -36,6 +38,8 @@ The [initial CI workflow](https://github.com/duell-dev/portstead/actions/runs/38
 
 ## Current implementation limits
 
+- Management pages use separate private Portstead windows. In-pane browsing, cross-origin navigation/SSO, popups, certificate exceptions and MCP browser control are not implemented. Moxa hardware and HTTP-authentication dialogs remain untested. Browser sessions are private, but there is no per-profile cookie partitioning.
+- Folder hierarchy uses slash-separated paths, supports up to 16 levels and preserves empty folders explicitly. There is no drag-and-drop reparenting. Dense global maps need zoom, focusing or tree navigation; above 300 nodes the layout uses more conservative ring spacing. Updated profiles require the updated app on the receiving machine.
 - Layouts contain one to four panes, using fixed grids. No arbitrary split tree, drag-to-resize, detached windows or tmux persistence yet.
 - RDP uses a 1280×800 initial desktop and full RGBA frame snapshots. Clipboard, audio, drive sharing, dynamic size changes, session reactivation and automatic reconnection are not implemented. Stop may wait for the current bounded network read during negotiation.
 - WinRM provides a persistent command runspace and basic host prompts. It has no tab completion/PSReadLine editor, general credential dialogs or reconnect recovery. Most pipeline output appears at completion. The current PSRP SDK collects stream records in memory before the app bounds the retained result; noisy WinRM jobs can use excessive memory. Bounded streaming is a release gate, not a solved problem.

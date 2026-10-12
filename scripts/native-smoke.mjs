@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { createServer } from 'node:net';
+import { createServer as createHttpServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
@@ -10,6 +11,12 @@ assert.equal(process.platform, 'win32', 'This smoke test uses Windows WebView2 d
 await mkdir('.local', { recursive: true });
 const directory = await mkdtemp(resolve('.local/native-smoke-'));
 const executable = resolve(process.env.PORTSTEAD_EXE || 'target/debug/portstead.exe');
+const managementServer = createHttpServer((_request, response) => {
+  response.writeHead(200, { 'Content-Type': 'text/html', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'" });
+  response.end(`<!doctype html><html><head><title>Device fixture</title></head><body><h1>Fixture management page</h1><form><label>Device username<input name="username"></label><button>Sign in</button></form><p id="device-status">Signed out</p><a href="http://localhost:${managementServer.address().port}/outside">Different origin</a><script>document.querySelector("form").onsubmit = event => { event.preventDefault(); document.querySelector("#device-status").textContent = "Signed in as " + document.querySelector("input").value; };</script></body></html>`);
+});
+await new Promise(resolve => managementServer.listen(0, '127.0.0.1', resolve));
+const managementUrl = `http://127.0.0.1:${managementServer.address().port}`;
 const reservation = createServer(); await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
 const port = reservation.address().port; await new Promise(resolve => reservation.close(resolve));
 const env = { ...process.env, CONNMANAGER_HOME: directory, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-debugging-address=127.0.0.1` };
@@ -26,6 +33,8 @@ try {
   for (let i = 0; i < 100; i++) { page = browser.contexts().flatMap(context => context.pages()).find(page => page.url().includes('tauri.localhost')); if (page) break; await pause(100); }
   assert(page, 'Native app page was not found');
   const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.getByRole('heading', { name: 'Connection map', exact: true }).waitFor();
+  await page.locator('#workspaces button').filter({ hasText: 'Local workspace' }).click();
   await page.getByRole('heading', { name: 'Local workspace' }).waitFor();
   assert.equal(await page.title(), 'Portstead');
   assert.equal(await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('plugin:window|title', { label: 'main' })), 'Portstead');
@@ -45,6 +54,7 @@ try {
   await page.locator('.operation pre').filter({ hasText: 'native-command-42' }).waitFor();
   await page.screenshot({ path: '.local/native-windows.png' });
   await page.locator('#connections button').filter({ hasText: 'Local shell' }).click();
+  await page.getByRole('button', { name: 'Edit connection', exact: true }).click();
   await page.getByRole('dialog').getByRole('checkbox').check();
   await page.getByRole('dialog').getByRole('button', { name: 'Save connection' }).click();
   await page.getByRole('dialog').waitFor({ state: 'hidden' });
@@ -79,11 +89,57 @@ try {
   await page.getByRole('button', { name: 'Agents on' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Disable agents', exact: true }).click();
   await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  await page.locator('#workspaces button').filter({ hasText: 'Local workspace' }).click();
   await page.getByRole('button', { name: 'Close workspace sessions' }).click();
   await page.waitForFunction(() => document.querySelector('#session-count').textContent === 'Ready');
   const saved = JSON.parse(await readFile(resolve(directory, 'library.json'), 'utf8')); assert.equal(saved.workspaces[0].panes.length, 4);
   assert.deepEqual(errors, []);
-  console.log('Native Windows smoke passed: four real PTYs and entry commands, terminal input, command output, saved layout, stdio MCP through the desktop engine, visible agent activity, cancellation and shutdown. No remote connections were opened.');
+  await page.getByRole('button', { name: 'New connection', exact: true }).click();
+  await page.getByRole('dialog').getByRole('textbox', { name: 'Name', exact: true }).fill('Fixture management');
+  await page.getByRole('dialog').locator('[name=group]').fill('Devices / Test');
+  await page.getByRole('dialog').getByRole('combobox', { name: 'Connection type' }).selectOption('web');
+  await page.getByRole('dialog').getByRole('textbox', { name: 'Management URL' }).fill(managementUrl);
+  await page.getByRole('dialog').getByRole('button', { name: 'Save connection' }).click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  await page.getByRole('dialog').getByRole('textbox', { name: 'Workspace name' }).fill('Device workspace');
+  await page.getByRole('dialog').getByRole('combobox', { name: 'Pane 1 connection' }).selectOption({ label: 'Fixture management' });
+  assert(await page.getByRole('dialog').locator('textarea').isDisabled());
+  await page.getByRole('dialog').getByRole('button', { name: 'Save workspace' }).click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'Open workspace' }).click();
+  let webPage;
+  for (let i = 0; i < 100; i++) { webPage = browser.contexts().flatMap(context => context.pages()).find(p => p.url().startsWith(managementUrl)); if (webPage) break; await pause(100); }
+  assert(webPage, 'Native management window was not found: ' + browser.contexts().flatMap(context => context.pages()).map(p => p.url()).join(', '));
+  await webPage.getByRole('heading', { name: 'Fixture management page' }).waitFor();
+  await webPage.getByRole('textbox', { name: 'Device username' }).fill('fixture-user');
+  await webPage.getByRole('button', { name: 'Sign in' }).click();
+  assert.equal(await webPage.locator('#device-status').innerText(), 'Signed in as fixture-user');
+  const remoteAccess = await webPage.evaluate(async () => {
+    if (!window.__TAURI_INTERNALS__?.invoke) return 'not-exposed';
+    try { await Promise.race([window.__TAURI_INTERNALS__.invoke('load_library'), new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))]); return 'allowed'; }
+    catch (error) { return String(error).includes('timeout') ? 'timeout' : 'denied'; }
+  });
+  assert(['not-exposed', 'denied'].includes(remoteAccess), `Device IPC isolation: ${remoteAccess}`);
+  await webPage.getByRole('link', { name: 'Different origin' }).click();
+  await pause(200);
+  assert.equal(new URL(webPage.url()).origin, managementUrl, 'Device navigation stays on the configured origin');
+  await page.screenshot({ path: '.local/native-web-workspace.png' });
+  await page.getByRole('button', { name: 'Close workspace sessions' }).click();
+  await page.waitForFunction(() => document.querySelector('#session-count').textContent === 'Ready');
+  for (let i = 0; i < 50 && !webPage.isClosed(); i++) await pause(100);
+  assert(webPage.isClosed(), 'Closing the workspace must close its management window');
+  await page.getByRole('button', { name: 'Connection map', exact: true }).click();
+  await page.locator('#connections [data-node]').filter({ hasText: 'Fixture management' }).click();
+  await page.getByRole('button', { name: 'Open management page', exact: true }).click();
+  let reopened;
+  for (let i = 0; i < 100; i++) { reopened = browser.contexts().flatMap(context => context.pages()).find(p => p.url().startsWith(managementUrl)); if (reopened) break; await pause(100); }
+  assert(reopened, 'Management page must open directly from the map');
+  assert.deepEqual(errors, []);
+  await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label: 'main' })).catch(error => assert.match(String(error), /Target page, context or browser has been closed/));
+  for (let i = 0; i < 50 && app.exitCode === null; i++) await pause(100);
+  assert.equal(app.exitCode, 0, 'Closing the main window must also exit management windows');
+  console.log('Native Windows smoke passed: four real PTYs, saved layouts, commands, MCP, cancellation, native HTTP window with a frame-blocking localhost fixture, device form input, denied device IPC, workspace closure and app exit. No remote systems were used.');
 } catch (error) {
   if (page) {
     await page.screenshot({ path: '.local/native-failure.png' }).catch(() => {});
@@ -93,6 +149,7 @@ try {
   }
   throw error;
 } finally {
+  managementServer.close();
   mcp?.stdin.end();
   if (page) await page.evaluate(async () => { await window.__TAURI_INTERNALS__.invoke('disable_agents'); await window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label: 'main' }); }).catch(() => {});
   if (browser) await browser.close().catch(() => {});

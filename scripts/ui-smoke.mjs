@@ -21,7 +21,11 @@ try {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(() => {
     const connection = { id: 'local', name: 'Local shell', group: 'This device', agent_access: false, target: { protocol: 'local', shell: null } };
-    let library = { version: 1, revision: 0, connections: [connection], workspaces: [{ id: 'workspace', name: 'Local workspace', panes: [{ connection_id: 'local', title: 'Shell', entry_command: '' }] }] };
+    let library = { version: 1, revision: 0, connections: [connection,
+      { id: 'debian', name: 'Debian build', group: 'Lab / Linux', agent_access: false, target: { protocol: 'ssh', host: 'build.example.invalid', username: 'operator', port: 22, identity_file: null } },
+      { id: 'windows', name: 'Windows server', group: 'Lab / Windows', agent_access: false, target: { protocol: 'rdp', host: 'windows.example.invalid', username: '', domain: '', port: 3389, certificate_sha256: null } },
+      { id: 'cluster', name: 'Development cluster', group: 'Lab / Kubernetes', agent_access: false, target: { protocol: 'kubernetes', source: 'fixture.yaml', context: 'development', namespace: 'operations' } }
+    ], workspaces: [{ id: 'workspace', name: 'Local workspace', panes: [{ connection_id: 'local', title: 'Shell', entry_command: '' }] }] };
     window.testCalls = []; window.testOperations = []; let count = 0;
     window.__TAURI_INTERNALS__ = { invoke: async (command, args = {}) => {
       window.testCalls.push({ command, args: structuredClone(args) });
@@ -34,11 +38,14 @@ try {
         case 'session_resize': case 'session_write': case 'session_close': case 'disable_agents': return;
         case 'run_command': window.testOperations.push({ id: 'operation', connection_id: 'local', connection_name: 'Local shell', target: connection.target, started_at: Date.now(), command: args.command, status: 'completed', actor: 'you', stdout: '<script>untrusted output</script>', stderr: '', exit_code: 0, truncated: false }); return 'operation';
         case 'enable_agents': return { port: 12345, executable: 'C:\\Portstead\\portstead.exe', profile_directory: 'C:\\Portstead\\profiles' };
+        case 'open_management_page': return 'web-page-test';
         default: throw new Error(`Unexpected test IPC: ${command}`);
       }
     } };
   });
   await page.goto(url);
+  await page.getByRole('heading', { name: 'Connection map', exact: true }).waitFor();
+  await page.locator('#workspaces button').filter({ hasText: 'Local workspace' }).click();
   await page.getByRole('heading', { name: 'Local workspace' }).waitFor();
   assert.equal(await page.title(), 'Portstead');
   assert.match(await page.locator('.brand').innerText(), /Portstead/);
@@ -84,5 +91,68 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   assert.equal(await page.evaluate(() => document.querySelector('.activity').getBoundingClientRect().top >= Math.max(...[...document.querySelectorAll('.pane')].map(p => p.getBoundingClientRect().bottom))), true, 'Activity must not overlap the panes');
   assert.deepEqual(errors, []);
-  console.log('UI smoke passed: four panes, entry commands, command target, escaped output, close, themes, connection editor, MCP configuration, minimum window size. IPC was mocked; no live connections were made.');
+  await page.getByRole('button', { name: 'Connection map', exact: true }).click();
+  await page.getByRole('button', { name: 'New folder', exact: true }).click();
+  await page.getByRole('dialog').getByRole('textbox', { name: 'Folder name', exact: true }).fill('Company');
+  await page.getByRole('dialog').getByRole('button', { name: 'Save folder', exact: true }).click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'Add child folder', exact: true }).click();
+  await page.getByRole('dialog').getByRole('textbox', { name: 'Folder name', exact: true }).fill('Budapest');
+  await page.getByRole('dialog').getByRole('button', { name: 'Save folder', exact: true }).click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'Add child folder', exact: true }).click();
+  await page.getByRole('dialog').getByRole('textbox', { name: 'Folder name', exact: true }).fill('Production');
+  await page.getByRole('dialog').getByRole('button', { name: 'Save folder', exact: true }).click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+  await page.getByRole('dialog').getByRole('textbox', { name: 'Name', exact: true }).fill('Moxa gateway');
+  await page.getByRole('dialog').getByRole('combobox', { name: 'Connection type' }).selectOption('web');
+  assert(await page.getByRole('dialog').getByRole('checkbox').isDisabled());
+  await page.getByRole('dialog').getByRole('textbox', { name: 'Management URL' }).fill('https://moxa.example.invalid');
+  await page.getByRole('dialog').getByRole('button', { name: 'Save connection' }).click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'Global map', exact: true }).click();
+  assert.equal(await page.locator('[data-map-node="connection:local"]').count(), 1);
+  assert.equal(await page.locator('[data-map-node="connection:cluster"]').count(), 1);
+  await page.locator('[data-map-node="folder:Company / Budapest"]').click();
+  assert.equal(await page.locator('[data-map-node]').count(), 3, 'Focused map includes nested folders and their connection');
+  assert.equal(await page.locator('[data-map-node="folder:This device"]').count(), 0);
+  await page.getByRole('navigation', { name: 'Folder breadcrumbs' }).getByRole('button', { name: 'Company', exact: true }).click();
+  assert.equal(await page.locator('[data-map-node]').count(), 4);
+  await page.getByRole('button', { name: 'Edit folder', exact: true }).click();
+  await page.getByRole('dialog').getByRole('textbox', { name: 'Folder name' }).fill('Sites');
+  await page.getByRole('dialog').getByRole('button', { name: 'Save folder', exact: true }).click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'connection: Moxa gateway', exact: true }).click();
+  await page.getByRole('button', { name: 'Open management page', exact: true }).click();
+  const webCall = await page.evaluate(() => window.testCalls.find(c => c.command === 'open_management_page'));
+  assert.equal(webCall.args.expectedTarget.url, 'https://moxa.example.invalid');
+  assert.match(await page.locator('#map-inspector').innerText(), /Sites \/ Budapest \/ Production/);
+  await page.getByRole('button', { name: 'Global map', exact: true }).click();
+  const beforeZoom = await page.locator('.connection-map').getAttribute('viewBox');
+  await page.getByRole('button', { name: 'Zoom in' }).click();
+  assert.notEqual(await page.locator('.connection-map').getAttribute('viewBox'), beforeZoom);
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await page.getByRole('button', { name: 'Change theme' }).click();
+  await page.screenshot({ path: '.local/map-global.png' });
+  await page.locator('[data-map-node="folder:Sites / Budapest"]').focus();
+  await page.keyboard.press('Enter');
+  await page.screenshot({ path: '.local/map-focused.png' });
+  await page.setViewportSize({ width: 850, height: 580 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  await page.screenshot({ path: '.local/map-small.png' });
+  await page.getByRole('button', { name: 'Global map', exact: true }).click();
+  await page.locator('[data-map-node="folder:Sites"]').click();
+  await page.getByRole('button', { name: 'Edit folder', exact: true }).click();
+  await page.getByRole('dialog').getByRole('combobox', { name: 'Parent folder', exact: true }).selectOption('Lab');
+  await page.getByRole('dialog').getByRole('button', { name: 'Save folder', exact: true }).click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('[data-map-node="folder:Lab / Sites / Budapest / Production"]').count(), 1);
+  await page.locator('#connections [data-node="connection:local"]').click();
+  await page.getByRole('button', { name: 'Open connection', exact: true }).click();
+  assert.equal(await page.locator('.pane').count(), 1);
+  const quick = await page.evaluate(() => window.testCalls.filter(c => c.command === 'open_session').at(-1));
+  assert.equal(quick.args.entry, '', 'Opening a connection must not reuse a saved workspace startup command');
+  assert.deepEqual(errors, []);
+  console.log('UI smoke passed: four panes, entry commands, explicit targets, escaping, themes, MCP config, global/focused maps, breadcrumbs, folder creation/rename/move, nested descendants, HTTP profiles, keyboard selection, zoom, direct connection opening and minimum window size. IPC was mocked.');
 } finally { server?.kill(); await browser.close(); }

@@ -8,6 +8,8 @@ This is an early working prototype built with Rust, Tauri 2, TypeScript and xter
 
 ## What is implemented
 
+- Nested folders with global and focused radial maps, a matching folder tree, breadcrumbs, search, pan/zoom, and folder rename/move. A focused folder shows all descendants. Connections and saved workspaces share the hierarchy.
+- HTTP/HTTPS management-page profiles for devices such as Moxa gateways. Pages open in private Portstead windows, can be assigned to workspaces, and have no access to app commands or stored credentials.
 - Saved one-to-four-pane workspaces, with individual connection targets, pane titles and entry commands.
 - Local and SSH terminals backed by real pseudoterminals. SSH uses the system OpenSSH client, including its existing config, host verification and agent support.
 - Kubernetes context import and independent session kubeconfig snapshots. Different panes can have different contexts and namespaces without changing the source kubeconfig.
@@ -54,7 +56,11 @@ The executable is `target/debug/portstead.exe` on Windows or `target/debug/ports
 
 ## First workspace
 
-Start with the included local workspace. Add SSH, RDP or WinRM connections using **Connections +**. Use **Workspaces +** or **Edit layout** to assign up to four panes. Entry commands execute when you explicitly open a pane or workspace; nothing connects automatically at startup.
+The app starts at **Connection map**. Choose the included local workspace in the sidebar to use its terminal. Add connections using **Folders & connections +**. Use **Workspaces +** or **Edit layout** to assign up to four panes. Entry commands execute when you explicitly open a pane or workspace; nothing connects automatically at startup.
+
+Use **New folder** to build your hierarchy, or enter a folder path such as `Company / Budapest / Production` in connection or workspace settings. Click a folder in the map or tree to make it the viewing root. **Focused map** includes all nested folders, connections and workspaces; **Global map** shows the whole library. Breadcrumbs return to ancestors. Search filters the tree and map. Drag the map to pan, scroll or use the zoom buttons, and use **Fit to view** to see its extent. Keyboard users can select nodes with Enter/Space and use the tree; the map surface also supports arrow keys, +/- and Home. **Edit folder** renames or moves an entire branch, preserving its targets and agent grants. Deletion is limited to empty folders.
+
+Choose **HTTP / HTTPS management page** for device web interfaces and enter the full URL. Login happens on the device page. The page opens in a separate Portstead window, including when opened from a saved workspace; it is not embedded inside the terminal grid. Navigation stays on the saved URL's origin, new-window popups are blocked, and normal HTTPS certificate checks remain enabled. Cross-origin SSO and certificate exceptions are not supported. Real device firmware and HTTP-authentication dialogs still require live testing. Management pages do not accept entry commands or MCP shell execution. Opening a terminal connection directly from the map creates or reuses a one-pane layout with no entry command.
 
 For Kubernetes, use **Import kubeconfig**, review the contexts and any executable authentication warnings, then add imported contexts to a workspace. The app copies the source into a private session snapshot and sets that child's `KUBECONFIG`. It preserves relative certificate/key paths by resolving them against the source file. It does not run `kubectl config use-context` against your original file. The prototype does not provide a Kubernetes resource browser.
 

@@ -1,6 +1,7 @@
 {
   "version": 1,
   "revision": 0,
+  "groups": ["Development / Devices", "Development / Future lab"],
   "connections": [
     { "id": "local", "name": "Local shell", "group": "This device", "agent_access": false, "target": { "protocol": "local", "shell": null } },
     { "id": "ssh-api", "name": "Debian API", "group": "Development", "agent_access": false, "target": { "protocol": "ssh", "host": "api.example.invalid", "username": "operator", "port": 22, "identity_file": null } },
@@ -8,21 +9,22 @@
     { "id": "kube-dev", "name": "Development cluster", "group": "Kubernetes", "agent_access": false, "target": { "protocol": "kubernetes", "source": "local://development-kubeconfig", "context": "development", "namespace": "apps" } },
     { "id": "kube-tools", "name": "Cluster tools namespace", "group": "Kubernetes", "agent_access": false, "target": { "protocol": "kubernetes", "source": "local://development-kubeconfig", "context": "development", "namespace": "tools" } },
     { "id": "winrm", "name": "Windows PowerShell", "group": "Windows", "agent_access": false, "target": { "protocol": "winrm", "host": "windows.example.invalid", "username": "operator", "domain": "", "port": 5986, "tls": true, "auth": "ntlm" } },
-    { "id": "rdp", "name": "Windows desktop", "group": "Windows", "agent_access": false, "target": { "protocol": "rdp", "host": "windows.example.invalid", "username": "operator", "domain": "", "port": 3389, "certificate_sha256": null } }
+    { "id": "rdp", "name": "Windows desktop", "group": "Windows", "agent_access": false, "target": { "protocol": "rdp", "host": "windows.example.invalid", "username": "operator", "domain": "", "port": 3389, "certificate_sha256": null } },
+    { "id": "moxa", "name": "Moxa management", "group": "Development / Devices", "agent_access": false, "target": { "protocol": "web", "url": "https://moxa.example.invalid" } }
   ],
   "workspaces": [
-    { "id": "local-workspace", "name": "Local workspace", "panes": [{ "connection_id": "local", "title": "Shell", "entry_command": "" }] },
-    { "id": "development", "name": "Development", "panes": [
+    { "id": "local-workspace", "name": "Local workspace", "group": "This device", "panes": [{ "connection_id": "local", "title": "Shell", "entry_command": "" }] },
+    { "id": "development", "name": "Development", "group": "Development", "panes": [
       { "connection_id": "ssh-api", "title": "API shell", "entry_command": "cd /srv/app" },
       { "connection_id": "ssh-api", "title": "Recent logs", "entry_command": "journalctl --no-pager -n 50" },
       { "connection_id": "ssh-ubuntu", "title": "Worker", "entry_command": "uname -a" },
       { "connection_id": "kube-dev", "title": "Cluster apps", "entry_command": "kubectl get pods" }
     ] },
-    { "id": "windows", "name": "Windows server", "panes": [
+    { "id": "windows", "name": "Windows server", "group": "Windows", "panes": [
       { "connection_id": "winrm", "title": "PowerShell", "entry_command": "$PSVersionTable" },
       { "connection_id": "rdp", "title": "Desktop", "entry_command": "" }
     ] },
-    { "id": "kubernetes", "name": "Cluster namespaces", "panes": [
+    { "id": "kubernetes", "name": "Cluster namespaces", "group": "Kubernetes", "panes": [
       { "connection_id": "kube-dev", "title": "Apps", "entry_command": "kubectl get pods" },
       { "connection_id": "kube-tools", "title": "Tools", "entry_command": "kubectl get pods" }
     ] }

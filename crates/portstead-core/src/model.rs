@@ -10,6 +10,8 @@ pub struct Library {
     pub revision: u64,
     pub connections: Vec<Connection>,
     pub workspaces: Vec<Workspace>,
+    #[serde(default)]
+    pub groups: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -70,6 +72,9 @@ pub enum Target {
         #[serde(default)]
         namespace: String,
     },
+    Web {
+        url: String,
+    },
 }
 
 fn ssh_port() -> u16 {
@@ -93,6 +98,8 @@ fn ntlm() -> String {
 pub struct Workspace {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub group: String,
     pub panes: Vec<Pane>,
 }
 
@@ -120,6 +127,33 @@ fn valid_id(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
+fn valid_group(path: &str) -> bool {
+    path.len() <= 2048
+        && !path.chars().any(char::is_control)
+        && (path.is_empty()
+            || (path.split('/').count() <= 16
+                && path
+                    .split('/')
+                    .all(|part| !part.trim().is_empty() && part.trim().len() <= 200)))
+}
+
+pub fn management_url(value: &str) -> Result<reqwest::Url> {
+    ensure!(
+        value.len() <= 2048 && !value.chars().any(char::is_control),
+        "Invalid management URL"
+    );
+    let url = reqwest::Url::parse(value)?;
+    ensure!(
+        matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
+        "Management pages need an HTTP or HTTPS URL"
+    );
+    ensure!(
+        url.username().is_empty() && url.password().is_none(),
+        "Enter credentials on the management page, not in its saved URL"
+    );
+    Ok(url)
+}
+
 impl Connection {
     pub fn require_local_bindings(&self) -> Result<()> {
         let path = match &self.target {
@@ -138,6 +172,7 @@ impl Library {
         Self {
             version: 1,
             revision: 0,
+            groups: Vec::new(),
             connections: vec![Connection {
                 id: "local".into(),
                 name: "Local shell".into(),
@@ -148,6 +183,7 @@ impl Library {
             workspaces: vec![Workspace {
                 id: "local-workspace".into(),
                 name: "Local workspace".into(),
+                group: "This device".into(),
                 panes: vec![Pane {
                     connection_id: "local".into(),
                     title: "Shell".into(),
@@ -164,9 +200,20 @@ impl Library {
             self.version
         );
         ensure!(
-            self.connections.len() <= 1000 && self.workspaces.len() <= 200,
+            self.connections.len() <= 1000
+                && self.workspaces.len() <= 200
+                && self.groups.len() <= 1000,
             "Profile library is too large"
         );
+        let mut groups = HashSet::new();
+        for path in &self.groups {
+            ensure!(
+                !path.is_empty() && valid_group(path),
+                "Invalid folder path (maximum 16 levels)"
+            );
+            let key = path.split('/').map(str::trim).collect::<Vec<_>>().join("/");
+            ensure!(groups.insert(key), "Duplicate folder path");
+        }
         let mut ids = HashSet::new();
         for c in &self.connections {
             ensure!(
@@ -177,6 +224,7 @@ impl Library {
                 !c.name.trim().is_empty() && c.name.len() <= 200,
                 "Connection name is required (maximum 200 characters)"
             );
+            ensure!(valid_group(&c.group), "Invalid connection folder path");
             match &c.target {
                 Target::Local { shell } => {
                     if let Some(s) = shell {
@@ -238,6 +286,13 @@ impl Library {
                         "Invalid Kubernetes namespace"
                     );
                 }
+                Target::Web { url } => {
+                    management_url(url)?;
+                    ensure!(
+                        !c.agent_access,
+                        "Management pages do not support agent shell commands"
+                    );
+                }
             }
         }
         let mut workspace_ids = HashSet::new();
@@ -250,6 +305,7 @@ impl Library {
                 !w.name.trim().is_empty() && w.name.len() <= 200,
                 "Workspace name is required"
             );
+            ensure!(valid_group(&w.group), "Invalid workspace folder path");
             // shortcut: layouts support up to four panes; add a split tree when larger layouts are needed.
             ensure!(
                 (1..=4).contains(&w.panes.len()),
@@ -267,10 +323,10 @@ impl Library {
                 );
                 if matches!(
                     self.connection(&p.connection_id)?.target,
-                    Target::Rdp { .. }
+                    Target::Rdp { .. } | Target::Web { .. }
                 ) && !p.entry_command.is_empty()
                 {
-                    bail!("RDP panes do not accept shell entry commands");
+                    bail!("RDP and management pages do not accept shell entry commands");
                 }
             }
         }
@@ -297,6 +353,60 @@ impl Library {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn old_profiles_load_and_nested_empty_folders_round_trip() {
+        let mut json = serde_json::to_value(Library::initial()).unwrap();
+        json.as_object_mut().unwrap().remove("groups");
+        json["workspaces"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("group");
+        let mut library: Library = serde_json::from_value(json).unwrap();
+        assert!(library.groups.is_empty());
+        assert!(library.workspaces[0].group.is_empty());
+        library
+            .groups
+            .push("Company / Budapest / Production".into());
+        library.connections[0].group = library.groups[0].clone();
+        library.validate().unwrap();
+        let saved: Library =
+            serde_json::from_str(&serde_json::to_string(&library).unwrap()).unwrap();
+        assert_eq!(saved.groups, library.groups);
+        library.groups.push("Company/Budapest/Production".into());
+        assert!(library.validate().is_err());
+        library.groups = vec!["Company / / Production".into()];
+        assert!(library.validate().is_err());
+    }
+
+    #[test]
+    fn management_pages_reject_credentials_scripts_and_shell_commands() {
+        for url in [
+            "http://192.0.2.1",
+            "https://moxa.example.invalid:8443/settings",
+        ] {
+            management_url(url).unwrap();
+        }
+        for url in [
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "tauri://localhost",
+            "https://admin:secret@example.invalid",
+            "https://admin@example.invalid",
+            "https://example.invalid\n/path",
+        ] {
+            assert!(management_url(url).is_err(), "{url}");
+        }
+        let mut library = Library::initial();
+        library.connections[0].target = Target::Web {
+            url: "http://192.0.2.1".into(),
+        };
+        library.validate().unwrap();
+        library.connections[0].agent_access = true;
+        assert!(library.validate().is_err());
+        library.connections[0].agent_access = false;
+        library.workspaces[0].panes[0].entry_command = "echo forbidden".into();
+        assert!(library.validate().is_err());
+    }
     #[test]
     fn validates_targets_and_references() {
         let mut library = Library::initial();

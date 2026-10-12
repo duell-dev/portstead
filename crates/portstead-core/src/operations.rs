@@ -75,8 +75,8 @@ impl Operations {
             "Timeout must be between 1 and 300 seconds"
         );
         ensure!(
-            !matches!(connection.target, Target::Rdp { .. }),
-            "Use SSH or WinRM for commands; RDP provides desktop access"
+            !matches!(connection.target, Target::Rdp { .. } | Target::Web { .. }),
+            "Use a terminal connection for commands; desktops and management pages do not run shell commands"
         );
         let mut items = self.items.lock().unwrap();
         // Keep completed results bounded while preserving every running operation.
@@ -335,6 +335,27 @@ fn local_command(shell: String, script: &str) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn management_pages_cannot_start_a_shell_operation() {
+        let dir = tempfile::tempdir().unwrap();
+        let operations = Operations::new(Store {
+            directory: dir.path().into(),
+        });
+        let mut connection = crate::model::Library::initial().connections.remove(0);
+        connection.target = Target::Web {
+            url: "http://192.0.2.1".into(),
+        };
+        assert!(operations
+            .start(
+                connection,
+                "echo forbidden".into(),
+                10,
+                Credentials::default(),
+                false
+            )
+            .is_err());
+        assert!(operations.list().is_empty());
+    }
     #[tokio::test]
     async fn cancels_a_running_local_command_and_bounds_output() {
         let dir = tempfile::tempdir().unwrap();
