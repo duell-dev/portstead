@@ -4,7 +4,7 @@
 
 A desktop home for the connections you use together. Save a workspace of up to four panes, assign each pane a connection and entry command, and open the whole setup again with one action.
 
-This is an early working prototype built with Rust, Tauri 2, TypeScript and xterm.js. Windows has been built and exercised locally. Linux uses the same engine and has a CI build configuration, but has not yet been validated on a working Linux desktop. See [the development status](docs/development-status.md) for the checks and remaining limits. The earlier [research](docs/connection-manager-research.md) explains the protocol choices.
+This is an early working prototype built with Rust, Tauri 2, TypeScript and xterm.js. Windows has been built and exercised locally. Linux has passed a clean CI build and automated tests, but still needs validation on a working Linux desktop. See [the development status](docs/development-status.md) for the checks and remaining limits. The earlier [research](docs/connection-manager-research.md) explains the protocol choices.
 
 ## What is implemented
 
