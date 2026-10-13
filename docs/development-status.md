@@ -28,6 +28,8 @@ The discovery update adds read-only SNMPv2c/SNMPv3, interface inventory and LLDP
 
 ## Verified in CI
 
+The [SNMP/LLDP discovery workflow](https://github.com/duell-dev/portstead/actions/runs/38374867338) passed for commit `4dc2ae6` on Windows 2025 and Ubuntu 24.04. Both jobs passed the frontend build, nine frontend tests, browser smoke, Rust formatting/Clippy, 26 Rust tests and the complete Tauri desktop build. Native Windows GUI, localhost SNMP and OS credential-profile checks were run locally; CI does not launch the native GUI or access real devices.
+
 The [hierarchy/HTTP CI workflow](https://github.com/duell-dev/portstead/actions/runs/38298379747) passed on Windows 2025 and Ubuntu 24.04. Both jobs passed the frontend build, six frontend unit tests, browser smoke test, Rust formatting and Clippy checks, 18 Rust unit tests, and the full Tauri desktop build. CI does not launch the native GUI or run authenticated remote sessions. The MCP keyring integration test is excluded from unattended CI and remains explicitly verified on Windows locally.
 
 ## Still to validate
@@ -57,4 +59,4 @@ The [hierarchy/HTTP CI workflow](https://github.com/duell-dev/portstead/actions/
 
 ## Next work
 
-Exercise the Linux desktop and conduct the RDP/WinRM acceptance tests in CONTRIBUTING.md. Fix protocol failures and introduce bounded PSRP streaming before spending time on extra protocol types or release packaging. Keep the profile/credential separation and explicit target checks as core behavior.
+Validate SNMP/LLDP against a non-production device before building a physical topology view from those observations. Exercise the Linux desktop and conduct the RDP/WinRM acceptance tests in CONTRIBUTING.md. Fix protocol failures and introduce bounded PSRP streaming before release packaging. Keep the profile/credential separation and explicit target checks as core behavior.
