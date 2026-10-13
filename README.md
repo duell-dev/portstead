@@ -10,6 +10,7 @@ This is an early working prototype built with Rust, Tauri 2, TypeScript and xter
 
 - Nested folders with global and focused radial maps, a matching folder tree, breadcrumbs, search, pan/zoom, and folder rename/move. A focused folder shows all descendants. Connections and saved workspaces share the hierarchy.
 - HTTP/HTTPS management-page profiles for devices such as Moxa gateways. Pages open in private Portstead windows, can be assigned to workspaces, and have no access to app commands or stored credentials.
+- Read-only SNMPv2c/SNMPv3 discovery with device inventory, interface status, LLDP neighbors, a review-and-merge step, and reusable credentials in the OS credential store.
 - Saved one-to-four-pane workspaces, with individual connection targets, pane titles and entry commands.
 - Local and SSH terminals backed by real pseudoterminals. SSH uses the system OpenSSH client, including its existing config, host verification and agent support.
 - Kubernetes context import and independent session kubeconfig snapshots. Different panes can have different contexts and namespaces without changing the source kubeconfig.
@@ -67,6 +68,20 @@ For Kubernetes, use **Import kubeconfig**, review the contexts and any executabl
 For WinRM, choose HTTPS with NTLM for a username/password connection, or Kerberos for your current Windows identity or an existing Linux ticket. The remote machine must already expose the intended WinRM endpoint. The app does not change server settings. The PowerShell pane accepts commands in the input below the terminal; it is not a full PSReadLine console.
 
 For RDP, normal certificate validation is the default. **Check server certificate** performs negotiation without a login. If a server uses a private/self-signed certificate, obtain its SHA-256 fingerprint through a trusted channel before saving that fingerprint in the connection. There is no global certificate bypass. On Windows the app can reuse a saved `TERMSRV/<host>` credential for the matching identity, or you can enter and optionally remember a password in the app.
+
+## Discover network devices
+
+Choose **Discover devices** in the sidebar. Enter hostnames, individual IPv4/IPv6 addresses, or IPv4 CIDR ranges from `/24` to `/32`, one per line. Set the SNMP port and credentials. SNMPv3 uses authenticated, encrypted requests with SHA-256 or SHA-1 and AES-128; v2c accepts a community string for older devices. Use a read-only account/community. Devices must already expose SNMP and, for neighbor details, an LLDP MIB accessible to that identity. The app does not enable services or change device configuration.
+
+To reuse credentials, enter a profile name and select **Remember credentials**. On later runs, select **Use saved profile** and enter that name. Secrets are stored in the OS credential store under `portstead-snmp`; they are not saved in profile JSON, returned to the UI when reused, or available through MCP. **Forget saved profile** removes the named credential.
+
+Review responding devices, names, interfaces, warnings and LLDP neighbors before choosing **Add selected devices**. Select a destination folder. Optionally create HTTP, HTTPS or SSH connections; these are your choices, not automatically verified services. Discovery merges into the current library. Existing device records refresh by management IP and SNMP port while retaining their ID, name, folder and saved host. Existing connections, workspaces and agent grants are preserved; newly created connections have agent access disabled. If another window has changed the library, save conflict detection still applies.
+
+Device records appear in the folder tree and both radial hierarchy views. Select one for matching saved management connections, or open **Device details** to inspect ports/neighbors, change its name/folder, or remove its inventory record. Removing the record does not delete connections. Connection matching uses saved hostnames and the observed management IP; it does not resolve arbitrary DNS aliases. Inventory and LLDP data are dated observations, not live reachability indicators. Hierarchy lines continue to mean folder membership, not physical wiring.
+
+Each run is limited to 256 explicit addresses, eight concurrent requests, a 90-second total runtime, and 15 seconds per device. Requests have two-second timeouts; interface and neighbor tables are bounded. **Stop discovery** keeps completed results for review; closing the dialog cancels the run. Advertised neighbors are never queried automatically. Only GET/GETBULK requests are used. There is no background polling, SNMP SET, trap listener, recursive discovery, vendor-specific MIB browser, physical topology graph or discovery MCP tool yet. Device deduplication does not model overlapping management IPs in separate networks. Real hardware interoperability remains to be validated.
+
+Optional `devices` records travel with JSON exports, including observed names, addresses, ports and topology details. Old JSON libraries without this field still load. Libraries containing inventory require this updated app on the receiving machine; older versions reject the added field. The whole library remains limited to 4 MiB.
 
 ## Move profiles between machines
 

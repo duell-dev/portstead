@@ -167,13 +167,15 @@ fn local_path(target: &mut Target) -> Option<&mut String> {
 }
 
 fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
+    let bytes = serde_json::to_vec_pretty(value)?;
+    ensure!(bytes.len() < 4 * 1024 * 1024, "Saved JSON exceeds 4 MiB");
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .context("Select an absolute profile path")?;
     fs::create_dir_all(parent)?;
     let mut file = tempfile::NamedTempFile::new_in(parent)?;
-    file.write_all(&serde_json::to_vec_pretty(value)?)?;
+    file.write_all(&bytes)?;
     file.write_all(b"\n")?;
     file.as_file().sync_all()?;
     file.persist(path)
@@ -185,6 +187,17 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rejects_oversized_pretty_json_without_replacing_the_existing_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("library.json");
+        write_json(&path, &vec!["original"]).unwrap();
+        let original = fs::read(&path).unwrap();
+        let large = vec![""; 750_000];
+        assert!(serde_json::to_vec(&large).unwrap().len() < 4 * 1024 * 1024);
+        assert!(write_json(&path, &large).is_err());
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
     #[test]
     fn saves_atomically_and_rejects_stale_edits() {
         let dir = tempfile::tempdir().unwrap();

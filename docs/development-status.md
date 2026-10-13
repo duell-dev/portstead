@@ -1,4 +1,4 @@
-# Portstead development status — 12 October 2026
+# Portstead development status — 13 October 2026
 
 This is the first implementation, not a production release. The executable embeds the frontend and can run independently of Vite. The application and MCP use the same Rust engine.
 
@@ -21,9 +21,10 @@ The source is published at [duell-dev/portstead](https://github.com/duell-dev/po
 | Native adapters | SSH, WinRM and embedded RDP code compile. |
 | Hierarchy navigation | Global/focused maps, nested descendants, breadcrumbs, folder creation/rename/move, keyboard selection, pan/zoom, tree search and small-window layouts pass browser checks. Folder transforms preserve targets and agent grants. |
 | HTTP management pages | A native private webview loads a frame-blocking localhost fixture, accepts form input, and denies profile-command access. Workspace and app closure are checked. This is not a test against Moxa hardware. |
+| SNMP device discovery | Native Windows discovery reads a localhost UDP fixture, saves the reviewed inventory without replacing connections/workspaces, saves/reuses/forgets a temporary OS credential profile, and honors cancellation before starting. Rust UDP fixtures separately verify encrypted SNMPv3 and LLDP port/address parsing. |
 | RDP negotiation | The authorized test host responded; the untrusted issuer stopped TLS validation before authentication. No credential was sent and no remote desktop session was opened. |
 
-The local suite currently includes 18 Rust unit tests, six frontend unit tests, the explicit real MCP integration test, and the browser/native smoke scripts. Re-run the README checks after changes; this document is a dated record.
+The discovery update adds read-only SNMPv2c/SNMPv3, interface inventory and LLDP neighbor inspection. Local UDP fixtures verify both SHA-1/AES-128 and SHA-256/AES-128 SNMPv3, invalid credentials, non-increasing table indices and cancellation. Browser checks verify review/merge, saved-profile selection, preservation of existing connections and escaped device text. The suite now contains 26 Rust unit tests and nine frontend unit tests, plus the explicit real MCP integration test and browser/native smoke scripts. Re-run the README checks after changes; this document is a dated record.
 
 ## Verified in CI
 
@@ -31,12 +32,16 @@ The [hierarchy/HTTP CI workflow](https://github.com/duell-dev/portstead/actions/
 
 ## Still to validate
 
+- **SNMP/LLDP hardware.** The wire tests use local fixtures. Moxa/vendor interoperability, actual SNMP access restrictions, large tables and Linux credential-profile reuse still need live checks.
+
 - **Linux desktop.** The clean build and automated tests passed in CI. Launching the actual desktop, interactive local PTYs, credential storage and real Kubernetes context isolation still require a working Linux desktop.
 - **Authenticated RDP.** The user chose to defer testing until certificate trust is independently established. Rendering, NLA, desktop input and reconnect behavior remain unproven against a live server.
 - **WinRM authentication and remote runspaces.** Domain/local NTLM, Windows identity and Linux Kerberos tickets require live targets. Secure-prompt cancellation is unit tested; a remote host has not yet been used.
 - **SSH and real Kubernetes clusters.** Actual host-key, agent, jump-host, exec-auth and network-disconnect cases need non-production acceptance tests.
 
 ## Current implementation limits
+
+- SNMP discovery is read-only and limited to 256 explicit targets, eight concurrent devices and 90 seconds per run. SNMPv3 supports SHA-1/SHA-256 with AES-128; there are no SET operations, traps, recursive neighbor queries, background monitoring or discovery MCP tools. LLDP neighbors are shown as dated observations in device details; the hierarchy map is not a physical topology graph. Device refresh matches management IP and SNMP port and does not distinguish overlapping networks. Saved credential profiles are reused by name on one machine.
 
 - Management pages use separate private Portstead windows. In-pane browsing, cross-origin navigation/SSO, popups, certificate exceptions and MCP browser control are not implemented. Moxa hardware and HTTP-authentication dialogs remain untested. Browser sessions are private, but there is no per-profile cookie partitioning.
 - Folder hierarchy uses slash-separated paths, supports up to 16 levels and preserves empty folders explicitly. There is no drag-and-drop reparenting. Dense global maps need zoom, focusing or tree navigation; above 300 nodes the layout uses more conservative ring spacing. Updated profiles require the updated app on the receiving machine.

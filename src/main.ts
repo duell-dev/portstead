@@ -4,8 +4,10 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { createIcons, icons } from 'lucide';
-import { Connection, Credentials, Library, Operation, Pane, Target, Update, Workspace, decodeFrame, defaultTarget, describe, protocolLabel, escapeHtml as e } from './types';
+import { Connection, Credentials, Device, Library, Operation, Pane, Target, Update, Workspace, decodeFrame, defaultTarget, describe, protocolLabel, escapeHtml as e } from './types';
 import { HierarchyNode, allNodes, groupPath, hierarchy, inGroup, moveGroup, parentGroup, radialLayout } from './hierarchy';
+import { deviceConnections, managementTarget } from './discovery';
+import { neighborDetails, showDiscovery } from './discovery-ui';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 const icon = (name: string) => `<i data-lucide="${name}" aria-hidden="true"></i>`;
@@ -51,6 +53,8 @@ function shell() {
   document.querySelector<HTMLInputElement>('#search')!.oninput = event => { search = (event.target as HTMLInputElement).value.toLowerCase(); renderSidebar(); if (page === 'map') renderMap(); };
   document.querySelector('#show-map')!.addEventListener('click', () => { page = 'map'; renderSidebar(); renderWorkspace(); });
   document.querySelector('#new-folder')!.addEventListener('click', () => editFolder());
+  const discoverButton = document.createElement('button'); discoverButton.className = 'nav-item muted'; discoverButton.innerHTML = `${icon('radar')}Discover devices`; discoverButton.id = 'discover-devices'; document.querySelector('.sidebar')!.append(discoverButton);
+  discoverButton.addEventListener('click', () => showDiscovery({ library: () => library, persist, dialog, field, folderField, error: formError, group: mapMode === 'focused' ? focusFolder : '' }));
   document.querySelector('#new-connection')!.addEventListener('click', () => editConnection());
   document.querySelector('#new-workspace')!.addEventListener('click', () => editWorkspace());
   document.querySelector('#theme')!.addEventListener('click', () => { theme = theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = theme; localStorage.setItem('theme', theme); for (const view of views.values()) if (view.terminal) view.terminal.options.theme = terminalTheme(); });
@@ -72,6 +76,7 @@ function renderSidebar() {
   const root = searchHierarchy();
   const row = (node: HierarchyNode): string => {
     if (node.kind === 'workspace') return '';
+    if (node.kind === 'device') return `<li><button class="nav-item tree-connection" data-node="${e(node.id)}" aria-current="${page === 'map' && mapSelection === node.id}">${icon('router')}<span class="nav-copy"><span>${e(node.name)}</span><small>SNMP device</small></span></button></li>`;
     if (node.kind === 'connection') {
       const connection = library.connections.find(c => 'connection:' + c.id === node.id)!;
       return `<li><button class="nav-item tree-connection" data-node="${e(node.id)}" aria-current="${page === 'map' && mapSelection === node.id}">${icon(kinds[connection.target.protocol])}<span class="nav-copy"><span>${e(node.name)}</span><small>${e(protocolLabel(connection.target))}</small></span></button></li>`;
@@ -118,7 +123,8 @@ function searchHierarchy(): HierarchyNode {
   if (!search) return root;
   const filter = (node: HierarchyNode): HierarchyNode | null => {
     const connection = node.kind === 'connection' ? library.connections.find(c => 'connection:' + c.id === node.id) : undefined;
-    const matches = `${node.name} ${node.path} ${connection ? describe(connection.target) : ''}`.toLowerCase().includes(search);
+    const device = node.kind === 'device' ? library.devices?.find(d => 'device:' + d.id === node.id) : undefined;
+    const matches = `${node.name} ${node.path} ${connection ? describe(connection.target) : ''} ${device ? device.host + ' ' + device.address + ' ' + device.location : ''}`.toLowerCase().includes(search);
     const children = node.children.map(filter).filter((child): child is HierarchyNode => !!child);
     return matches || children.length ? { ...node, children: matches ? node.children : children } : null;
   };
@@ -190,11 +196,15 @@ function renderMapInspector() {
   let body: string;
   if (node.kind === 'folder') {
     const contents = allNodes(node).filter(n => n.kind !== 'folder');
-    const connections = contents.filter(n => n.kind === 'connection').length; const workspaces = contents.filter(n => n.kind === 'workspace').length;
-    body = `<div class="inspector-icon">${icon('folder')}</div><h2>${e(node.name)}</h2><p class="muted">${connections} ${connections === 1 ? 'connection' : 'connections'} · ${workspaces} ${workspaces === 1 ? 'workspace' : 'workspaces'}</p><dl><dt>Folder</dt><dd>${e(node.path || 'All connections')}</dd></dl><button class="primary" data-add-connection>${icon('plus')}Add connection</button><button class="secondary" data-add-child>${icon('folder-plus')}Add child folder</button>${node.path ? '<button class="secondary" data-edit-folder>Edit folder</button>' : ''}`;
+    const connections = contents.filter(n => n.kind === 'connection').length; const workspaces = contents.filter(n => n.kind === 'workspace').length; const devices = contents.filter(n => n.kind === 'device').length;
+    body = `<div class="inspector-icon">${icon('folder')}</div><h2>${e(node.name)}</h2><p class="muted">${connections} ${connections === 1 ? 'connection' : 'connections'} · ${workspaces} ${workspaces === 1 ? 'workspace' : 'workspaces'}${devices ? ' · ' + devices + ' devices' : ''}</p><dl><dt>Folder</dt><dd>${e(node.path || 'All connections')}</dd></dl><button class="primary" data-add-connection>${icon('plus')}Add connection</button><button class="secondary" data-add-child>${icon('folder-plus')}Add child folder</button>${node.path ? '<button class="secondary" data-edit-folder>Edit folder</button>' : ''}`;
   } else if (node.kind === 'connection') {
     const connection = library.connections.find(c => 'connection:' + c.id === node.id)!;
     body = `<div class="inspector-icon">${icon(kinds[connection.target.protocol])}</div><h2>${e(connection.name)}</h2><span class="protocol-badge">${e(protocolLabel(connection.target))}</span><dl><dt>${connection.target.protocol === 'web' ? 'URL' : 'Target'}</dt><dd>${e(describe(connection.target))}</dd><dt>Folder</dt><dd>${e(connection.group || 'All connections')}</dd></dl><button class="primary" data-open-connection>${icon(connection.target.protocol === 'web' ? 'external-link' : 'play')}${connection.target.protocol === 'web' ? 'Open management page' : 'Open connection'}</button><button class="secondary" data-edit-connection>${icon('sliders-horizontal')}Edit connection</button>`;
+  } else if (node.kind === 'device') {
+    const device = library.devices!.find(d => 'device:' + d.id === node.id)!;
+    const connections = deviceConnections(library, device);
+    body = `<div class="inspector-icon">${icon('router')}</div><h2>${e(device.name)}</h2><span class="protocol-badge">SNMP inventory</span><dl><dt>Management address</dt><dd>${e(device.host)} · ${e(device.address)}</dd><dt>Folder</dt><dd>${e(device.group || 'All connections')}</dd><dt>Last observed</dt><dd>${e(new Date(device.observed_at * 1000).toLocaleString())}</dd><dt>Interfaces / LLDP neighbors</dt><dd>${device.interfaces.length} / ${device.neighbors.length}</dd></dl>${connections.map(c => `<button class="secondary" data-device-open="${e(c.id)}">${e(protocolLabel(c.target))} · ${e(c.name)}</button>`).join('')}<button class="primary" data-device-details>Device details</button><button class="secondary" data-device-add>Add management connection</button>`;
   } else {
     const workspace = library.workspaces.find(w => 'workspace:' + w.id === node.id)!;
     body = `<div class="inspector-icon">${icon('panels-top-left')}</div><h2>${e(workspace.name)}</h2><p class="muted">Saved layout · ${workspace.panes.length} panes</p><dl><dt>Folder</dt><dd>${e(workspace.group || 'All connections')}</dd></dl><button class="primary" data-workspace>View workspace</button><button class="secondary" data-edit-workspace>Edit workspace</button>`;
@@ -207,7 +217,19 @@ function renderMapInspector() {
   panel.querySelector('[data-open-connection]')?.addEventListener('click', () => catchError(() => openConnection(library.connections.find(c => 'connection:' + c.id === node.id)!)));
   panel.querySelector('[data-edit-workspace]')?.addEventListener('click', () => editWorkspace(library.workspaces.find(w => 'workspace:' + w.id === node.id)));
   panel.querySelector('[data-workspace]')?.addEventListener('click', () => { selected = node.id.slice('workspace:'.length); page = 'workspace'; renderSidebar(); renderWorkspace(); });
+  const device = library.devices?.find(d => 'device:' + d.id === node.id);
+  panel.querySelector('[data-device-details]')?.addEventListener('click', () => editDevice(device!));
+  panel.querySelector('[data-device-add]')?.addEventListener('click', () => editConnection(undefined, device!.group, { name: device!.name, target: managementTarget(device!, 'https')! }));
+  panel.querySelectorAll<HTMLButtonElement>('[data-device-open]').forEach(button => button.onclick = () => catchError(() => openConnection(library.connections.find(c => c.id === button.dataset.deviceOpen)!)));
   refreshIcons();
+}
+
+function editDevice(device: Device) {
+  const status = (value: number) => ({ 1: 'Up', 2: 'Down', 3: 'Testing', 4: 'Unknown', 5: 'Dormant', 6: 'Not present', 7: 'Lower layer down' }[value] || 'Unknown');
+  const node = dialog('Device details', `${field('Name', 'name', device.name, 'text', true)}${folderField(device.group)}<dl class="device-metadata"><dt>Management address</dt><dd>${e(device.host)} · ${e(device.address)}:${device.snmp_port}</dd><dt>System description</dt><dd>${e(device.description || 'Not exposed')}</dd><dt>Object identifier</dt><dd>${e(device.sys_object_id || 'Not exposed')}</dd><dt>Location / contact</dt><dd>${e(device.location || 'Not exposed')} / ${e(device.contact || 'Not exposed')}</dd><dt>Reported uptime</dt><dd>${(device.uptime_ticks / 100 / 86400).toFixed(2)} days</dd><dt>Last observed</dt><dd>${e(new Date(device.observed_at * 1000).toLocaleString())}</dd></dl>${neighborDetails(device)}<details><summary>Interfaces (${device.interfaces.length})</summary><div class="table-scroll"><table><thead><tr><th>Index</th><th>Name</th><th>Administrative</th><th>Operational</th></tr></thead><tbody>${device.interfaces.map(i => `<tr><td>${i.index}</td><td>${e(i.name)}</td><td>${e(status(i.admin_status))}</td><td>${e(status(i.oper_status))}</td></tr>`).join('')}</tbody></table></div></details>${device.warnings.map(w => `<p class="muted">${e(w)}</p>`).join('')}`, '<button type="button" class="danger" data-delete>Remove device record</button><button type="submit" class="primary">Save device</button>');
+  node.classList.add('discovery-dialog');
+  node.querySelector('form')!.onsubmit = async event => { event.preventDefault(); try { const next = structuredClone(library); const current = next.devices?.find(d => d.id === device.id); if (!current) throw new Error('Device no longer exists.'); current.name = value(event.target as HTMLFormElement, 'name'); current.group = groupPath(value(event.target as HTMLFormElement, 'group')); await persist(next); node.close(); } catch (error) { formError(node, error); } };
+  node.querySelector('[data-delete]')!.addEventListener('click', () => catchError(async () => { if (await confirmAction('Remove device record', `Remove the inventory record for ${device.name}? Saved connections remain available.`, 'Remove record')) { const next = structuredClone(library); next.devices = next.devices?.filter(d => d.id !== device.id); await persist(next); node.close(); } }));
 }
 
 function renderMap() {
@@ -222,8 +244,8 @@ function renderMap() {
   const points = radialLayout(root); const byId = new Map(points.map(p => [p.node.id, p]));
   if (!byId.has(mapSelection)) mapSelection = root.id;
   const paths = ['']; for (const part of viewingPath.split(' / ').filter(Boolean)) paths.push(paths.at(-1) ? paths.at(-1) + ' / ' + part : part);
-  const nodeType = (node: HierarchyNode) => node.kind === 'folder' ? 'folder' : node.kind === 'workspace' ? 'panels-top-left' : kinds[library.connections.find(c => 'connection:' + c.id === node.id)!.target.protocol];
-  const label = (node: HierarchyNode) => node.kind === 'folder' ? `${node.children.length} ${node.children.length === 1 ? 'item' : 'items'}` : node.kind === 'workspace' ? 'Workspace' : protocolLabel(library.connections.find(c => 'connection:' + c.id === node.id)!.target);
+  const nodeType = (node: HierarchyNode) => node.kind === 'folder' ? 'folder' : node.kind === 'device' ? 'router' : node.kind === 'workspace' ? 'panels-top-left' : kinds[library.connections.find(c => 'connection:' + c.id === node.id)!.target.protocol];
+  const label = (node: HierarchyNode) => node.kind === 'folder' ? `${node.children.length} ${node.children.length === 1 ? 'item' : 'items'}` : node.kind === 'device' ? 'SNMP device' : node.kind === 'workspace' ? 'Workspace' : protocolLabel(library.connections.find(c => 'connection:' + c.id === node.id)!.target);
   const edges = points.filter(p => p.parent).map(p => { const parent = byId.get(p.parent!)!; return `<path data-child="${e(p.node.id)}" d="M ${parent.x} ${parent.y} L ${p.x} ${p.y}"/>`; }).join('');
   const marks = points.map(p => `<g class="map-node ${p.node.id === mapSelection ? 'selected' : ''}" role="button" tabindex="0" aria-label="${e(p.node.kind + ': ' + (p.node.path && p.node.kind === 'folder' ? p.node.path : p.node.name))}" data-map-node="${e(p.node.id)}" transform="translate(${p.x} ${p.y})"><title>${e(p.node.name)} · ${e(p.node.path || 'All connections')}</title>${p.depth ? `<rect x="-82" y="-29" width="164" height="58" rx="9"/><foreignObject x="-68" y="-11" width="22" height="22"><div xmlns="http://www.w3.org/1999/xhtml">${icon(nodeType(p.node))}</div></foreignObject><text x="-38" y="-3">${e(p.node.name.length > 20 ? p.node.name.slice(0, 19) + '…' : p.node.name)}</text><text class="map-subtitle" x="-38" y="15">${e(label(p.node))}</text>` : `<circle r="48"/><foreignObject x="-12" y="-24" width="24" height="24"><div xmlns="http://www.w3.org/1999/xhtml">${icon('folder')}</div></foreignObject><text text-anchor="middle" y="19">${e(p.node.name.length > 14 ? p.node.name.slice(0, 13) + '…' : p.node.name)}</text>`}</g>`).join('');
   document.querySelector('#organization')!.innerHTML = `<div class="map-heading"><div><h1>Connection map</h1><p class="workspace-description">${mapMode === 'global' ? 'Your whole library' : 'Everything beneath this folder'}</p></div><div class="actions"><button class="secondary" data-add-folder>${icon('folder-plus')}Add folder</button><button class="primary" data-map-add>${icon('plus')}Connection</button></div></div><div class="map-toolbar"><div class="map-modes" role="group" aria-label="Map scope"><button aria-pressed="${mapMode === 'global'}" data-mode="global">Global map</button><button aria-pressed="${mapMode === 'focused'}" data-mode="focused" ${!focusFolder ? 'disabled' : ''}>Focused map</button></div><nav class="breadcrumbs" aria-label="Folder breadcrumbs">${paths.map((path, i) => `<button data-path="${e(path)}" ${i === paths.length - 1 ? 'aria-current="location"' : ''}>${e(path ? path.split(' / ').at(-1)! : 'All connections')}</button>${i < paths.length - 1 ? '<span aria-hidden="true">›</span>' : ''}`).join('')}</nav></div><div class="map-body"><div class="map-viewport"><svg class="connection-map" aria-label="Connection hierarchy map" tabindex="0"><g class="map-links">${edges}</g>${marks}</svg><div class="map-controls"><button class="secondary" data-zoom="out" aria-label="Zoom out">−</button><span data-scale></span><button class="secondary" data-zoom="in" aria-label="Zoom in">+</button><button class="secondary" data-fit>Fit to view</button></div>${points.length === 1 ? `<p class="map-empty">${search ? 'No matching connections in this folder.' : 'This folder is empty. Add a connection or child folder.'}</p>` : ''}<span class="map-key">Lines show folder membership</span></div><aside id="map-inspector" class="map-inspector" aria-label="Selected item details"></aside></div>`;
@@ -382,8 +404,8 @@ async function getCredentials(connection: Connection): Promise<Credentials> {
   });
 }
 
-function editConnection(existing?: Connection, group = page === 'map' && mapMode === 'focused' ? focusFolder : '') {
-  const draft = existing ? structuredClone(existing) : { id: crypto.randomUUID(), name: '', group, agent_access: false, target: defaultTarget('ssh') };
+function editConnection(existing?: Connection, group = page === 'map' && mapMode === 'focused' ? focusFolder : '', seed?: { name: string; target: Target }) {
+  const draft = existing ? structuredClone(existing) : { id: crypto.randomUUID(), name: seed?.name || '', group, agent_access: false, target: seed?.target || defaultTarget('ssh') };
   const node = dialog(existing ? 'Connection settings' : 'New connection', `${field('Name', 'name', draft.name, 'text', true)}<div class="field-row">${folderField(draft.group)}<label class="field">Connection type<select name="protocol">${Object.keys(kinds).map(kind => `<option value="${kind}" ${kind === draft.target.protocol ? 'selected' : ''}>${kind === 'web' ? 'HTTP / HTTPS management page' : kind.toUpperCase()}</option>`).join('')}</select></label></div><div id="target-fields"></div><label class="check"><input type="checkbox" name="agent_access" ${draft.agent_access ? 'checked' : ''}><span>Allow agents to execute commands using this connection's account</span></label>${existing && ['rdp', 'winrm'].includes(existing.target.protocol) ? '<button type="button" class="secondary" data-forget>Forget saved password on this device</button>' : ''}${existing?.target.protocol === 'rdp' ? '<button type="button" class="secondary" data-probe>Check server certificate</button><p data-probe-result class="muted"></p>' : ''}`, `${existing ? '<button type="button" class="danger" data-delete>Delete</button>' : ''}<button type="submit" class="primary">Save connection</button>`);
   const targetFields = () => {
     const t = draft.target; let markup = '';

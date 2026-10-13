@@ -2,6 +2,7 @@
 use portstead_core::{
     broker,
     credentials::{self, Credentials},
+    discovery::{self, DiscoveryResult, SnmpCredentials},
     engine::Engine,
     kubernetes::{self, KubeImport},
     model::{Library, Target},
@@ -14,7 +15,7 @@ use std::{
     path::Path,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 use tauri::{Manager, State, WebviewWindow};
@@ -25,6 +26,84 @@ fn reply<T>(value: anyhow::Result<T>) -> Reply<T> {
 }
 
 static NEXT_WEB_PAGE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Default)]
+struct DiscoveryState(Mutex<DiscoveryStateData>);
+#[derive(Default)]
+struct DiscoveryStateData {
+    active: Option<(String, tokio_util::sync::CancellationToken)>,
+    cancelled: std::collections::VecDeque<String>,
+}
+struct DiscoveryRun(Arc<DiscoveryState>);
+impl Drop for DiscoveryRun {
+    fn drop(&mut self) {
+        self.0 .0.lock().unwrap().active = None;
+    }
+}
+#[tauri::command]
+async fn discover_devices(
+    state: State<'_, Arc<DiscoveryState>>,
+    request_id: String,
+    targets: Vec<String>,
+    port: u16,
+    credentials: Option<SnmpCredentials>,
+    profile_name: String,
+    remember: bool,
+) -> Reply<DiscoveryResult> {
+    let token = tokio_util::sync::CancellationToken::new();
+    if request_id.is_empty() || request_id.len() > 96 {
+        return Err("Invalid discovery request ID".into());
+    }
+    {
+        let mut active = state.0.lock().unwrap();
+        if active.active.is_some() {
+            return Err(
+                "A discovery is already running. Cancel it before starting another.".into(),
+            );
+        }
+        if let Some(index) = active.cancelled.iter().position(|id| *id == request_id) {
+            active.cancelled.remove(index);
+            token.cancel();
+        }
+        active.active = Some((request_id, token.clone()));
+    }
+    let _run = DiscoveryRun(state.inner().clone());
+    let credentials = match credentials {
+        Some(credentials) => credentials,
+        None => reply(discovery::load_credentials(&profile_name))?,
+    };
+    reply(credentials.validate())?;
+    reply(discovery::targets(&targets))?;
+    if port == 0 {
+        return Err("SNMP port is required".into());
+    }
+    if remember {
+        reply(discovery::save_credentials(&profile_name, &credentials))?;
+    }
+    reply(discovery::discover(targets, port, credentials, token).await)
+}
+#[tauri::command]
+fn cancel_discovery(state: State<Arc<DiscoveryState>>, request_id: String) {
+    if request_id.len() > 96 {
+        return;
+    }
+    let mut state = state.0.lock().unwrap();
+    if let Some((id, token)) = &state.active {
+        if *id == request_id {
+            token.cancel();
+            return;
+        }
+    }
+    // A close event can arrive before the async discovery command has been scheduled.
+    if state.cancelled.len() == 32 {
+        state.cancelled.pop_front();
+    }
+    state.cancelled.push_back(request_id);
+}
+#[tauri::command]
+fn forget_snmp_profile(profile_name: String) -> Reply<()> {
+    reply(discovery::forget_credentials(&profile_name))
+}
 
 #[tauri::command]
 async fn open_management_page(
@@ -304,9 +383,11 @@ fn run() -> anyhow::Result<()> {
             Ok(())
         });
     }
+    let discovery_state = Arc::new(DiscoveryState::default());
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(engine.clone())
+        .manage(discovery_state.clone())
         .invoke_handler(|invoke| {
             if invoke.message.webview_ref().label() != "main" {
                 invoke
@@ -323,6 +404,9 @@ fn run() -> anyhow::Result<()> {
                 import_library,
                 export_library,
                 import_kubeconfig,
+                discover_devices,
+                cancel_discovery,
+                forget_snmp_profile,
                 auth_info,
                 forget_credential,
                 open_session,
@@ -347,6 +431,7 @@ fn run() -> anyhow::Result<()> {
             handle.exit(0);
         }
         if let tauri::RunEvent::Exit = event {
+            if let Some((_, token)) = &discovery_state.0.lock().unwrap().active { token.cancel(); }
             engine.shutdown();
         }
     });

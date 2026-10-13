@@ -6,9 +6,26 @@ import { createServer as createHttpServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
+import { createSocket } from 'node:dgram';
+
+const snmpServer = createSocket('udp4');
+const tlv = (tag, bytes) => Buffer.concat([Buffer.from([tag, bytes.length]), bytes]);
+const integer = value => { const bytes = Buffer.alloc(4); bytes.writeInt32BE(value); return tlv(2, bytes); };
+const readTlv = (bytes, position) => { const tag = bytes[position++]; let length = bytes[position++]; if (length & 128) { const count = length & 127; length = 0; for (let i = 0; i < count; i++) length = length * 256 + bytes[position++]; } return { tag, start: position, end: position + length }; };
+snmpServer.on('message', (bytes, peer) => {
+  const message = readTlv(bytes, 0); const version = readTlv(bytes, message.start); const community = readTlv(bytes, version.end); const pdu = readTlv(bytes, community.end); const request = readTlv(bytes, pdu.start);
+  assert([0xa0, 0xa5].includes(pdu.tag), 'Discovery must only send GET/GETBULK');
+  const value = pdu.tag === 0xa0 ? tlv(0x30, Buffer.concat([tlv(6, Buffer.from([43, 6, 1, 2, 1, 1, 5, 0])), tlv(4, Buffer.from('Native fixture switch'))])) : Buffer.alloc(0);
+  const requestBytes = bytes.subarray(request.start, request.end); let requestId = requestBytes.reduce((value, byte) => value * 256 + byte, 0); if (requestBytes[0] & 128) requestId -= 2 ** (8 * requestBytes.length);
+  const response = tlv(0xa2, Buffer.concat([integer(requestId), integer(0), integer(0), tlv(0x30, value)]));
+  const packet = tlv(0x30, Buffer.concat([integer(1), tlv(4, bytes.subarray(community.start, community.end)), response]));
+  snmpServer.send(packet, peer.port, peer.address);
+});
 
 assert.equal(process.platform, 'win32', 'This smoke test uses Windows WebView2 debugging');
 await mkdir('.local', { recursive: true });
+await new Promise(resolve => snmpServer.bind(0, '127.0.0.1', resolve));
+const snmpProfileName = 'portstead-native-smoke-' + crypto.randomUUID();
 const directory = await mkdtemp(resolve('.local/native-smoke-'));
 const executable = resolve(process.env.PORTSTEAD_EXE || 'target/debug/portstead.exe');
 const managementServer = createHttpServer((_request, response) => {
@@ -135,11 +152,35 @@ try {
   let reopened;
   for (let i = 0; i < 100; i++) { reopened = browser.contexts().flatMap(context => context.pages()).find(p => p.url().startsWith(managementUrl)); if (reopened) break; await pause(100); }
   assert(reopened, 'Management page must open directly from the map');
+  await page.getByRole('button', { name: 'Discover devices', exact: true }).click();
+  const discovery = page.getByRole('dialog');
+  await discovery.getByRole('textbox', { name: 'Hosts or IPv4 CIDR ranges' }).fill('127.0.0.1');
+  await discovery.getByLabel('SNMP port', { exact: true }).fill(String(snmpServer.address().port));
+  await discovery.getByRole('combobox', { name: 'SNMP version' }).selectOption('v2c');
+  await discovery.getByLabel('Community string', { exact: true }).fill('native-fixture-only');
+  await discovery.getByLabel('Credential profile name (to save or reuse)').fill(snmpProfileName);
+  await discovery.getByRole('checkbox', { name: "Remember credentials in this device's OS credential store" }).check();
+  await discovery.getByRole('button', { name: 'Discover', exact: true }).click();
+  await discovery.getByRole('heading', { name: 'Review discovered devices' }).waitFor();
+  assert.match(await discovery.innerText(), /Native fixture switch/);
+  await discovery.getByLabel('Folder path', { exact: true }).fill('Fixture / Networking');
+  await discovery.getByRole('button', { name: 'Add selected devices' }).click(); await discovery.waitFor({ state: 'hidden' });
+  const inventory = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('load_library'));
+  assert.equal(inventory.devices.length, 1); assert.equal(inventory.devices[0].group, 'Fixture / Networking');
+  assert(inventory.workspaces.some(w => w.name === 'Device workspace'));
+  const savedInventory = await readFile(resolve(directory, 'library.json'), 'utf8'); assert(!savedInventory.includes('native-fixture-only'));
+  const reused = await page.evaluate(args => window.__TAURI_INTERNALS__.invoke('discover_devices', args), { requestId: crypto.randomUUID(), targets: ['127.0.0.1'], port: snmpServer.address().port, credentials: null, profileName: snmpProfileName, remember: false });
+  assert.equal(reused.devices[0].name, 'Native fixture switch');
+  await page.evaluate(profileName => window.__TAURI_INTERNALS__.invoke('forget_snmp_profile', { profileName }), snmpProfileName);
+  const earlyCancelId = crypto.randomUUID();
+  await page.evaluate(requestId => window.__TAURI_INTERNALS__.invoke('cancel_discovery', { requestId }), earlyCancelId);
+  const cancelledDiscovery = await page.evaluate(args => window.__TAURI_INTERNALS__.invoke('discover_devices', args), { requestId: earlyCancelId, targets: ['127.0.0.1'], port: snmpServer.address().port, credentials: { version: 'v2c', community: 'native-fixture-only' }, profileName: '', remember: false });
+  assert.equal(cancelledDiscovery.cancelled, true); assert.equal(cancelledDiscovery.devices.length, 0);
   assert.deepEqual(errors, []);
   await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label: 'main' })).catch(error => assert.match(String(error), /Target page, context or browser has been closed/));
   for (let i = 0; i < 50 && app.exitCode === null; i++) await pause(100);
   assert.equal(app.exitCode, 0, 'Closing the main window must also exit management windows');
-  console.log('Native Windows smoke passed: four real PTYs, saved layouts, commands, MCP, cancellation, native HTTP window with a frame-blocking localhost fixture, device form input, denied device IPC, workspace closure and app exit. No remote systems were used.');
+  console.log('Native Windows smoke passed: real PTYs, layouts, commands, MCP, cancellation, native HTTP isolation, SNMP UDP discovery, inventory merge, OS credential-profile save/reuse/forget, early discovery cancellation and app exit. Only localhost fixtures were used.');
 } catch (error) {
   if (page) {
     await page.screenshot({ path: '.local/native-failure.png' }).catch(() => {});
@@ -149,9 +190,10 @@ try {
   }
   throw error;
 } finally {
+  snmpServer.close();
   managementServer.close();
   mcp?.stdin.end();
-  if (page) await page.evaluate(async () => { await window.__TAURI_INTERNALS__.invoke('disable_agents'); await window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label: 'main' }); }).catch(() => {});
+  if (page) await page.evaluate(async profileName => { await window.__TAURI_INTERNALS__.invoke('forget_snmp_profile', { profileName }); await window.__TAURI_INTERNALS__.invoke('disable_agents'); await window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label: 'main' }); }, snmpProfileName).catch(() => {});
   if (browser) await browser.close().catch(() => {});
   await pause(500);
   if (app.exitCode === null) app.kill();

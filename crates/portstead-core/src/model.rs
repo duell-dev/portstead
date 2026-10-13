@@ -12,6 +12,8 @@ pub struct Library {
     pub workspaces: Vec<Workspace>,
     #[serde(default)]
     pub groups: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub devices: Vec<crate::discovery::Device>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -173,6 +175,7 @@ impl Library {
             version: 1,
             revision: 0,
             groups: Vec::new(),
+            devices: Vec::new(),
             connections: vec![Connection {
                 id: "local".into(),
                 name: "Local shell".into(),
@@ -205,6 +208,21 @@ impl Library {
                 && self.groups.len() <= 1000,
             "Profile library is too large"
         );
+        ensure!(self.devices.len() <= 1000, "Too many device records");
+        let mut device_ids = HashSet::new();
+        for device in &self.devices {
+            ensure!(
+                valid_id(&device.id) && device_ids.insert(&device.id),
+                "Invalid or duplicate device ID"
+            );
+            ensure!(
+                !device.name.trim().is_empty()
+                    && device.name.len() <= 200
+                    && valid_group(&device.group),
+                "Invalid device name or folder"
+            );
+            device.validate()?;
+        }
         let mut groups = HashSet::new();
         for path in &self.groups {
             ensure!(
@@ -330,6 +348,10 @@ impl Library {
                 }
             }
         }
+        ensure!(
+            serde_json::to_vec(self)?.len() <= 4 * 1024 * 1024,
+            "Profile file exceeds 4 MiB"
+        );
         Ok(())
     }
 
@@ -448,5 +470,32 @@ mod tests {
             .connections
             .iter()
             .all(|connection| !connection.agent_access));
+    }
+    #[test]
+    fn validates_optional_device_inventory_and_exports_no_credentials() {
+        let mut library = Library::initial();
+        let old = serde_json::to_string(&library).unwrap();
+        assert!(!old.contains("devices"));
+        let old: Library = serde_json::from_str(&old).unwrap();
+        assert!(old.devices.is_empty());
+        library.devices.push(crate::discovery::Device {
+            id: "switch".into(),
+            name: "Fixture switch".into(),
+            host: "switch.example.invalid".into(),
+            address: "192.0.2.4".into(),
+            snmp_port: 161,
+            ..crate::discovery::Device::default()
+        });
+        library.validate().unwrap();
+        let mut json = serde_json::to_value(&library).unwrap();
+        json["devices"][0]["community"] = "not-permitted".into();
+        assert!(serde_json::from_value::<Library>(json).is_err());
+        library.devices[0]
+            .neighbors
+            .push(crate::discovery::LldpNeighbor {
+                addresses: vec!["not-an-ip".into()],
+                ..crate::discovery::LldpNeighbor::default()
+            });
+        assert!(library.validate().is_err());
     }
 }

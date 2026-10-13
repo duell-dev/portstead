@@ -4,7 +4,7 @@ export interface HierarchyNode {
   id: string;
   name: string;
   path: string;
-  kind: 'folder' | 'connection' | 'workspace';
+  kind: 'folder' | 'connection' | 'workspace' | 'device';
   children: HierarchyNode[];
 }
 export interface MapNode { node: HierarchyNode; x: number; y: number; depth: number; parent?: string }
@@ -26,6 +26,7 @@ export function hierarchy(library: Library): HierarchyNode {
     return current;
   };
   for (const path of library.groups || []) folder(path);
+  for (const d of library.devices || []) folder(d.group).children.push({ id: 'device:' + d.id, name: d.name, path: groupPath(d.group), kind: 'device', children: [] });
   for (const c of library.connections) folder(c.group).children.push({ id: 'connection:' + c.id, name: c.name, path: groupPath(c.group), kind: 'connection', children: [] });
   for (const w of library.workspaces) folder(w.group).children.push({ id: 'workspace:' + w.id, name: w.name, path: groupPath(w.group), kind: 'workspace', children: [] });
   const sort = (node: HierarchyNode) => { node.children.sort((a, b) => Number(b.kind === 'folder') - Number(a.kind === 'folder') || a.name.localeCompare(b.name) || a.id.localeCompare(b.id)); node.children.forEach(sort); };
@@ -49,6 +50,7 @@ export function moveGroup(library: Library, from: string, to: string): Library {
   next.groups = [...new Set([...(next.groups || []).map(replace), to])];
   next.connections.forEach(c => c.group = replace(c.group));
   next.workspaces.forEach(w => w.group = replace(w.group));
+  next.devices?.forEach(d => d.group = replace(d.group));
   return next;
 }
 

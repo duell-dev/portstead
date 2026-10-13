@@ -100,4 +100,16 @@ textarea { resize:vertical; min-height:70px; font-family:Consolas,monospace; } .
 .map-inspector dt { color:var(--muted); margin-top:14px; }
 .map-inspector dd { margin:5px 0 0; white-space:pre-wrap; }
 .map-inspector > button { width:100%; margin-top:8px; font-size:12px; }
+.discovery-dialog { width:780px; }
+.discovery-results { max-height:50vh; overflow:auto; padding-right:8px; }
+.discovery-result { border:1px solid var(--line); border-radius:8px; padding:15px; margin:12px 0; overflow-wrap:anywhere; }
+.discovery-result .check { flex-wrap:wrap; }
+.table-scroll { overflow:auto; max-height:260px; }
+.discovery-dialog table { border-collapse:collapse; width:100%; font-size:12px; margin:12px 0; }
+.discovery-dialog th,.discovery-dialog td { text-align:left; border-bottom:1px solid var(--line); padding:9px; overflow-wrap:anywhere; min-width:80px; }
+.discovery-dialog details { font-size:12px; margin:12px 0; }
+.discovery-dialog summary { cursor:pointer; color:var(--accent); }
+.device-metadata { font-size:12px; overflow-wrap:anywhere; }
+.device-metadata dt { color:var(--muted); margin-top:10px; }
+.device-metadata dd { margin:4px 0; }
 @media(max-width:1100px) { .map-body { grid-template-columns:1fr; min-height:0; } .map-viewport { min-height:330px; height:clamp(330px,calc(100vh - 260px),480px); } .map-inspector { border-left:0; border-top:1px solid var(--line); padding:15px 0; } .map-inspector > button { width:auto; margin-right:7px; } .map-heading { flex-wrap:wrap; } }

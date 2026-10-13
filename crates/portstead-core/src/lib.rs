@@ -1,5 +1,6 @@
 pub mod broker;
 pub mod credentials;
+pub mod discovery;
 pub mod engine;
 pub mod kubernetes;
 pub mod mcp;
