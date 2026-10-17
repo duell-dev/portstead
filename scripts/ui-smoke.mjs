@@ -40,7 +40,7 @@ try {
         case 'enable_agents': return { port: 12345, executable: 'C:\\Portstead\\portstead.exe', profile_directory: 'C:\\Portstead\\profiles' };
         case 'open_management_page': return 'web-page-test';
         case 'forget_snmp_profile': case 'cancel_discovery': return;
-        case 'discover_devices': return { cancelled: false, failures: [{ host: '192.0.2.5', error: 'SNMP request timed out' }], devices: [{ id: 'observed-switch', name: 'Fixture switch', group: '', host: '192.0.2.4', address: '192.0.2.4', snmp_port: 161, sys_object_id: '1.3.6.1.4.1.8691', description: '<script>untrusted device description</script>', location: 'Fixture lab', contact: '', uptime_ticks: 12345, observed_at: 42, interfaces: [{ index: 7, name: 'Ethernet7', admin_status: 1, oper_status: 2 }], neighbors: [{ local_port: 'Port7', remote_port: 'Port8', chassis_id: '00:01:02:03:04:05', name: '<script>neighbor</script>', description: '', addresses: ['192.0.2.8'] }], warnings: [] }] };
+        case 'discover_devices': return { cancelled: false, failures: [{ host: '192.0.2.5', error: 'SNMP request timed out' }], devices: window.testDiscoveryDevices || [{ id: 'observed-switch', name: 'Fixture switch', group: '', host: '192.0.2.4', address: '192.0.2.4', snmp_port: 161, sys_object_id: '1.3.6.1.4.1.8691', description: '<script>untrusted device description</script>', location: 'Fixture lab', contact: '', uptime_ticks: 12345, observed_at: 42, interfaces: [{ index: 7, name: 'Ethernet7', admin_status: 1, oper_status: 2 }], neighbors: [{ local_port: 'Port7', remote_port: 'Port8', chassis_id: '00:01:02:03:04:05', name: '<script>neighbor</script>', description: '', addresses: ['192.0.2.8'] }], warnings: [] }] };
         default: throw new Error(`Unexpected test IPC: ${command}`);
       }
     } };
@@ -190,6 +190,85 @@ try {
   await discovery.getByRole('button', { name: 'Add selected devices' }).click(); await discovery.waitFor({ state: 'hidden' });
   const refreshed = await page.evaluate(() => window.testCalls.filter(c => c.command === 'save_library').at(-1).args.library);
   assert.equal(refreshed.devices.length, 1); assert.equal(refreshed.devices[0].group, 'Lab / Network');
+  await page.getByRole('button', { name: 'Topology', exact: true }).click();
+  await page.getByRole('heading', { name: 'Topology', exact: true }).waitFor();
+  assert.equal(await page.locator('[data-topology-node]').count(), 2);
+  assert.equal(await page.locator('[data-topology-edge]').count(), 1);
+  assert.equal(await page.locator('#organization script').count(), 0);
+  await page.getByRole('button', { name: 'Unresolved neighbor: <script>neighbor</script>', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  assert.match(await page.locator('#topology-inspector').innerText(), /No saved device matches/);
+  const topoBox = await page.locator('.topology-map').getAttribute('viewBox');
+  await page.getByRole('button', { name: 'Zoom in' }).click();
+  assert.notEqual(await page.locator('.topology-map').getAttribute('viewBox'), topoBox);
+  await page.locator('.topology-map').focus(); await page.keyboard.press('Home');
+  await page.evaluate(() => {
+    const first = structuredClone(window.testCalls.filter(c => c.command === 'save_library').at(-1).args.library.devices[0]);
+    first.chassis_id = '00:01:02:03:04:04'; first.chassis_subtype = 4;
+    first.neighbors.push({ ...first.neighbors[0], local_port: 'Port9', remote_port: 'Port10' }, { ...first.neighbors[0], local_port: 'Port11', remote_port: 'P1', addresses: ['198.51.100.10'], name: 'External neighbor' });
+    const second = { ...structuredClone(first), id: 'observed-second', name: 'Distribution switch', host: '192.0.2.8', address: '192.0.2.8', chassis_id: '00:01:02:03:04:08', observed_at: 100, neighbors: [
+      { local_port: 'Port8', remote_port: 'Port7', addresses: ['192.0.2.4'], chassis_id: first.chassis_id, name: first.name, description: '' },
+      { local_port: 'Port12', remote_port: 'Port13', addresses: [], chassis_id: '00:01:02:03:04:09', chassis_subtype: 4, name: 'Access switch', description: '' }
+    ] };
+    const third = { ...structuredClone(first), id: 'observed-third', name: 'Access switch', host: '192.0.2.9', address: '192.0.2.9', chassis_id: '00:01:02:03:04:09', neighbors: [
+      { local_port: 'Port14', remote_port: 'Port15', addresses: ['192.0.2.4'], chassis_id: first.chassis_id, name: first.name, description: '' }
+    ] };
+    window.testDiscoveryDevices = [first, second, third];
+  });
+  await page.locator('#discover-devices').click();
+  await discovery.getByRole('textbox', { name: 'Hosts or IPv4 CIDR ranges' }).fill('192.0.2.4\n192.0.2.8\n192.0.2.9');
+  await discovery.getByRole('combobox', { name: 'SNMP version' }).selectOption('v2c');
+  await discovery.getByLabel('Community string', { exact: true }).fill('fixture-only');
+  await discovery.getByRole('button', { name: 'Discover', exact: true }).click();
+  await discovery.getByRole('heading', { name: 'Review discovered devices' }).waitFor();
+  await discovery.getByLabel('Folder path', { exact: true }).fill('Lab / Network');
+  await discovery.getByRole('button', { name: 'Add selected devices' }).click(); await discovery.waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('[data-topology-node]').count(), 4);
+  assert.equal(await page.locator('[data-topology-edge]').count(), 5, 'Ring, parallel links and unresolved neighbors remain visible');
+  assert.equal(await page.locator('.topology-edge.reciprocal').count(), 1);
+  await page.getByRole('button', { name: 'Both ends', exact: true }).click();
+  assert.match(await page.locator('#topology-inspector').innerText(), /Matched by management address/);
+  await page.locator('.topology-table').getByRole('button', { name: 'Distribution switch', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Focus Distribution switch', exact: true }).click();
+  assert.equal(await page.locator('[data-topology-edge]').count(), 3);
+  await page.getByRole('button', { name: 'Show full topology', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Topology folder' }).selectOption('Lab / Linux');
+  assert.equal(await page.locator('[data-topology-node]').count(), 0);
+  await page.getByRole('combobox', { name: 'Topology folder' }).selectOption('Lab / Network');
+  await page.getByRole('textbox', { name: 'Search connections and workspaces' }).fill('192.0.2.9');
+  assert.equal(await page.locator('[data-topology-edge]').count(), 2);
+  await page.getByRole('textbox', { name: 'Search connections and workspaces' }).fill('');
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.evaluate(() => document.querySelector('.main').scrollTop = 0);
+  await page.waitForFunction(() => document.querySelector('.topology-map').getBoundingClientRect().top > 100);
+  await page.screenshot({ path: '.local/topology.png' });
+  await page.getByRole('button', { name: 'Change theme' }).click();
+  await page.screenshot({ path: '.local/topology-light.png' });
+  await page.setViewportSize({ width: 850, height: 580 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  await page.screenshot({ path: '.local/topology-small.png' });
+  await page.evaluate(() => {
+    const base = structuredClone(window.testDiscoveryDevices[0]);
+    window.testDiscoveryDevices = Array.from({ length: 151 }, (_, i) => ({ ...base, id: `dense-${i}`, name: `Switch ${i + 1}`, host: `192.0.2.${i + 1}`, address: `192.0.2.${i + 1}`, chassis_id: '', chassis_subtype: 0, neighbors: [{ local_port: 'P1', remote_port: 'P2', chassis_id: '', name: '', description: '', addresses: [`192.0.2.${(i + 1) % 151 + 1}`] }] }));
+  });
+  await page.locator('#discover-devices').click();
+  await discovery.getByRole('textbox', { name: 'Hosts or IPv4 CIDR ranges' }).fill('192.0.2.0/24');
+  await discovery.getByRole('combobox', { name: 'SNMP version' }).selectOption('v2c');
+  await discovery.getByLabel('Community string', { exact: true }).fill('fixture-only');
+  await discovery.getByRole('button', { name: 'Discover', exact: true }).click();
+  await discovery.getByRole('heading', { name: 'Review discovered devices' }).waitFor();
+  await discovery.getByLabel('Folder path', { exact: true }).fill('Lab / Network');
+  await discovery.getByRole('button', { name: 'Add selected devices' }).click(); await discovery.waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('[data-topology-node]').count(), 0, 'Dense graph offers a readable table instead of tiny nodes');
+  assert.match(await page.locator('.map-empty').innerText(), /too dense/);
+  assert.equal(await page.locator('.topology-table tbody tr').count(), 100);
+  await page.getByRole('button', { name: 'Next links', exact: true }).click();
+  assert.equal(await page.locator('.topology-table tbody tr').count(), 51);
+  await page.locator('.topology-table [data-select-node]').first().click();
+  await page.locator('#topology-inspector [data-neighborhood]').click();
+  assert.equal(await page.locator('[data-topology-node]').count(), 3, 'A neighborhood remains usable for dense inventories');
+  await page.getByRole('button', { name: 'Connection map', exact: true }).click();
+  assert.equal(await page.locator('.topology-map').count(), 0);
   assert.deepEqual(errors, []);
-  console.log('UI smoke passed: four panes, entry commands, explicit targets, escaping, themes, MCP config, global/focused maps, folders, HTTP profiles, keyboard/zoom, direct opening, minimum window size, SNMP preview/merge, device details and saved-profile reuse. IPC was mocked.');
+  console.log('UI smoke passed: workspaces, hierarchy, discovery and LLDP topology with reciprocal/parallel links, unresolved neighbors, focus, search, folders, keyboard, zoom, themes and small-window layouts. IPC was mocked.');
 } finally { server?.kill(); await browser.close(); }

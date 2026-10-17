@@ -8,13 +8,16 @@ import { Connection, Credentials, Device, Library, Operation, Pane, Target, Upda
 import { HierarchyNode, allNodes, groupPath, hierarchy, inGroup, moveGroup, parentGroup, radialLayout } from './hierarchy';
 import { deviceConnections, managementTarget } from './discovery';
 import { neighborDetails, showDiscovery } from './discovery-ui';
+import { TopologyState, renderTopology } from './topology-ui';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 const icon = (name: string) => `<i data-lucide="${name}" aria-hidden="true"></i>`;
 const kinds: Record<Target['protocol'], string> = { local: 'terminal', ssh: 'server', winrm: 'terminal-square', rdp: 'monitor', kubernetes: 'boxes', web: 'globe' };
 let library: Library;
 let selected = ''; let search = ''; let agents = false;
-let page: 'workspace' | 'map' = 'map';
+let page: 'workspace' | 'map' | 'topology' = 'map';
+const topologyState: TopologyState = { folder: '', selected: '', link: '', focus: '', tablePage: 0 };
+let disposeTopology: (() => void) | undefined;
 let mapMode: 'global' | 'focused' = 'global';
 let focusFolder = ''; let mapSelection = 'folder:';
 const collapsedFolders = new Set<string>();
@@ -39,7 +42,7 @@ function dialog(title: string, body: string, actions: string): HTMLDialogElement
 const field = (label: string, name: string, value = '', type = 'text', required = false) => `<label class="field">${e(label)}<input name="${name}" value="${e(value)}" type="${type}" ${required ? 'required' : ''}></label>`;
 function value(form: HTMLFormElement, name: string) { return String(new FormData(form).get(name) || '').trim(); }
 function formError(node: HTMLElement, error: unknown) { node.querySelector('.form-error')!.textContent = String(error); }
-async function persist(next: Library) { library = await invoke<Library>('save_library', { library: next }); renderSidebar(); if (page === 'map') renderMap(); }
+async function persist(next: Library) { library = await invoke<Library>('save_library', { library: next }); renderSidebar(); if (page !== 'workspace') renderWorkspace(); }
 async function confirmAction(title: string, text: string, button: string): Promise<boolean> {
   return new Promise(resolve => {
     const node = dialog(title, `<p>${e(text)}</p>`, `<button type="submit" class="primary">${e(button)}</button>`);
@@ -50,7 +53,9 @@ async function confirmAction(title: string, text: string, button: string): Promi
 
 function shell() {
   app.innerHTML = `<div class="shell"><header class="appbar"><div class="brand"><span class="brandmark">›_</span>Portstead <span class="badge">Prototype</span></div><div class="actions"><button id="import">${icon('download')}Import</button><button id="export">${icon('upload')}Export</button><button id="agents">${icon('bot')}Agents off</button><button id="theme" aria-label="Change theme">${icon('sun-moon')}</button></div></header><aside class="sidebar"><input id="search" class="search" placeholder="Find a connection or workspace" aria-label="Search connections and workspaces"><button id="show-map" class="nav-item">${icon('network')}Connection map</button><div class="section-label">Workspaces<button id="new-workspace" aria-label="New workspace">${icon('plus')}</button></div><nav id="workspaces" aria-label="Workspaces"></nav><div class="section-label">Folders & connections<button id="new-connection" aria-label="New connection">${icon('plus')}</button></div><nav id="connections" aria-label="Folder hierarchy"></nav><button id="new-folder" class="nav-item muted">${icon('folder-plus')}New folder</button><button id="import-kube" class="nav-item muted">${icon('file-key')}Import kubeconfig</button></aside><main class="main"><section id="organization" class="organization"></section><div id="workspace-heading" class="workspace-heading"></div><div id="panes" class="panes"></div><section class="activity"><button id="activity-toggle" class="activity-summary">${icon('activity')}Execution activity</button><div id="operations" hidden></div></section></main><footer class="footer"><span id="session-count">Ready</span><span>Profiles stay on this device · Credentials use your OS store</span></footer></div>`;
-  document.querySelector<HTMLInputElement>('#search')!.oninput = event => { search = (event.target as HTMLInputElement).value.toLowerCase(); renderSidebar(); if (page === 'map') renderMap(); };
+  const topologyButton = document.createElement('button'); topologyButton.id = 'show-topology'; topologyButton.className = 'nav-item'; topologyButton.innerHTML = `${icon('waypoints')}Topology`; document.querySelector('#show-map')!.after(topologyButton);
+  topologyButton.onclick = () => { page = 'topology'; renderSidebar(); renderWorkspace(); };
+  document.querySelector<HTMLInputElement>('#search')!.oninput = event => { search = (event.target as HTMLInputElement).value.toLowerCase(); topologyState.tablePage = 0; renderSidebar(); if (page !== 'workspace') renderWorkspace(); };
   document.querySelector('#show-map')!.addEventListener('click', () => { page = 'map'; renderSidebar(); renderWorkspace(); });
   document.querySelector('#new-folder')!.addEventListener('click', () => editFolder());
   const discoverButton = document.createElement('button'); discoverButton.className = 'nav-item muted'; discoverButton.innerHTML = `${icon('radar')}Discover devices`; discoverButton.id = 'discover-devices'; document.querySelector('.sidebar')!.append(discoverButton);
@@ -72,6 +77,7 @@ function renderSidebar() {
   ws.innerHTML = library.workspaces.filter(w => match(`${w.name} ${w.group || ''}`)).map(w => `<button class="nav-item" data-id="${e(w.id)}" aria-current="${page === 'workspace' && w.id === selected}">${icon('panels-top-left')}<span class="nav-copy"><span>${e(w.name)}</span><small>${w.panes.length} ${w.panes.length === 1 ? 'pane' : 'panes'}</small></span></button>`).join('');
   ws.querySelectorAll<HTMLButtonElement>('button').forEach(button => button.onclick = () => { page = 'workspace'; selected = button.dataset.id!; renderSidebar(); renderWorkspace(); });
   document.querySelector('#show-map')!.setAttribute('aria-current', String(page === 'map'));
+  document.querySelector('#show-topology')!.setAttribute('aria-current', String(page === 'topology'));
   const list = document.querySelector('#connections')!;
   const root = searchHierarchy();
   const row = (node: HierarchyNode): string => {
@@ -91,9 +97,15 @@ function renderSidebar() {
 }
 
 function renderWorkspace() {
-  document.querySelector<HTMLElement>('#organization')!.hidden = page !== 'map';
-  document.querySelector<HTMLElement>('#workspace-heading')!.hidden = page === 'map';
-  document.querySelector<HTMLElement>('#panes')!.hidden = page === 'map';
+  disposeTopology?.(); disposeTopology = undefined; mapResize?.disconnect();
+  document.querySelector<HTMLElement>('#organization')!.hidden = page === 'workspace';
+  document.querySelector<HTMLElement>('#workspace-heading')!.hidden = page !== 'workspace';
+  document.querySelector<HTMLElement>('#panes')!.hidden = page !== 'workspace';
+  if (page === 'topology') {
+    document.querySelector('.main')!.scrollTop = 0;
+    disposeTopology = renderTopology(document.querySelector<HTMLElement>('#organization')!, { library, search, state: topologyState, rerender: renderWorkspace, details: editDevice, open: id => catchError(() => openConnection(library.connections.find(c => c.id === id)!)), discover: () => document.querySelector<HTMLButtonElement>('#discover-devices')!.click() });
+    return;
+  }
   if (page === 'map') { renderMap(); return; }
   const workspace = library.workspaces.find(w => w.id === selected);
   const heading = document.querySelector('#workspace-heading')!; const container = document.querySelector<HTMLElement>('#panes')!;

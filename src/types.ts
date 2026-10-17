@@ -9,8 +9,8 @@ export interface Connection { id: string; name: string; group: string; agent_acc
 export interface Pane { connection_id: string; title: string; entry_command: string }
 export interface Workspace { id: string; name: string; group: string; panes: Pane[] }
 export interface DeviceInterface { index: number; name: string; admin_status: number; oper_status: number }
-export interface LldpNeighbor { local_port: string; chassis_id: string; remote_port: string; name: string; description: string; addresses: string[] }
-export interface Device { id: string; name: string; group: string; host: string; address: string; snmp_port: number; sys_object_id: string; description: string; location: string; contact: string; uptime_ticks: number; observed_at: number; interfaces: DeviceInterface[]; neighbors: LldpNeighbor[]; warnings: string[] }
+export interface LldpNeighbor { local_port: string; chassis_id: string; chassis_subtype?: number; remote_port: string; name: string; description: string; addresses: string[] }
+export interface Device { id: string; name: string; group: string; host: string; address: string; snmp_port: number; sys_object_id: string; chassis_id?: string; chassis_subtype?: number; description: string; location: string; contact: string; uptime_ticks: number; observed_at: number; interfaces: DeviceInterface[]; neighbors: LldpNeighbor[]; warnings: string[] }
 export interface DiscoveryResult { devices: Device[]; failures: { host: string; error: string }[]; cancelled: boolean }
 export interface Library { version: number; revision: number; connections: Connection[]; workspaces: Workspace[]; groups: string[]; devices?: Device[] }
 export interface Credentials { username: string; domain: string; password: string; remember: boolean }

@@ -11,6 +11,7 @@ This is an early working prototype built with Rust, Tauri 2, TypeScript and xter
 - Nested folders with global and focused radial maps, a matching folder tree, breadcrumbs, search, pan/zoom, and folder rename/move. A focused folder shows all descendants. Connections and saved workspaces share the hierarchy.
 - HTTP/HTTPS management-page profiles for devices such as Moxa gateways. Pages open in private Portstead windows, can be assigned to workspaces, and have no access to app commands or stored credentials.
 - Read-only SNMPv2c/SNMPv3 discovery with device inventory, interface status, LLDP neighbors, a review-and-merge step, and reusable credentials in the OS credential store.
+- An LLDP topology view with port labels, reciprocal/one-sided evidence, rings and parallel links, unresolved neighbors, folder filtering, neighborhood focus and a dated link table.
 - Saved one-to-four-pane workspaces, with individual connection targets, pane titles and entry commands.
 - Local and SSH terminals backed by real pseudoterminals. SSH uses the system OpenSSH client, including its existing config, host verification and agent support.
 - Kubernetes context import and independent session kubeconfig snapshots. Different panes can have different contexts and namespaces without changing the source kubeconfig.
@@ -79,9 +80,19 @@ Review responding devices, names, interfaces, warnings and LLDP neighbors before
 
 Device records appear in the folder tree and both radial hierarchy views. Select one for matching saved management connections, or open **Device details** to inspect ports/neighbors, change its name/folder, or remove its inventory record. Removing the record does not delete connections. Connection matching uses saved hostnames and the observed management IP; it does not resolve arbitrary DNS aliases. Inventory and LLDP data are dated observations, not live reachability indicators. Hierarchy lines continue to mean folder membership, not physical wiring.
 
-Each run is limited to 256 explicit addresses, eight concurrent requests, a 90-second total runtime, and 15 seconds per device. Requests have two-second timeouts; interface and neighbor tables are bounded. **Stop discovery** keeps completed results for review; closing the dialog cancels the run. Advertised neighbors are never queried automatically. Only GET/GETBULK requests are used. There is no background polling, SNMP SET, trap listener, recursive discovery, vendor-specific MIB browser, physical topology graph or discovery MCP tool yet. Device deduplication does not model overlapping management IPs in separate networks. Real hardware interoperability remains to be validated.
+Each run is limited to 256 explicit addresses, eight concurrent requests, a 90-second total runtime, and 15 seconds per device. Requests have two-second timeouts; interface and neighbor tables are bounded. **Stop discovery** keeps completed results for review; closing the dialog cancels the run. Advertised neighbors are never queried automatically. Only GET/GETBULK requests are used. There is no background polling, SNMP SET, trap listener, recursive discovery, vendor-specific MIB browser or discovery MCP tool yet. Device deduplication does not model overlapping management IPs in separate networks. Real hardware interoperability remains to be validated.
 
 Optional `devices` records travel with JSON exports, including observed names, addresses, ports and topology details. Old JSON libraries without this field still load. Libraries containing inventory require this updated app on the receiving machine; older versions reject the added field. The whole library remains limited to 4 MiB.
+
+## View network topology
+
+After **Add selected devices**, choose **Topology** in the sidebar. This view derives links from saved LLDP observations; it does not move devices between folders or open connections automatically. Refresh discovery and add its results again to update observations. New scans collect each switch's own LLDP chassis identity. Older saved inventory still loads; rescanning improves matching where neighbors do not advertise management addresses.
+
+Neighbors match a unique saved management IP first, then a unique chassis identity with its LLDP subtype. Device names never establish links. Ambiguous identities and neighbors outside the inventory stay visible as dashed-outline nodes, with an explanation in their details. Each unresolved advertisement remains separate rather than assuming two similar sightings identify the same device. This cannot resolve overlapping address spaces without separate inventories.
+
+Solid links have matching reports from both endpoints for the same port pair. Dashed links have one report. Parallel port pairs, rings and self-loops remain visible. Select a device or link for port labels, matching evidence, observation times and available saved connections. **Device details** opens its inventory record. Reports with different or missing port identifiers stay separate; reciprocal evidence does not prove a link is available now.
+
+Filter by folder or search to narrow the graph; adjacent devices outside the filter remain visible to show boundary links. **Focus** shows a device and its direct neighbors. Use pan/zoom, **Fit to view**, Enter/Space for selection, and arrow keys/+/-/Home on the map surface. The circular layout expresses connectivity, not physical location or distance. Above 150 nodes or 300 links, use the paginated link table to choose a device and focus its neighborhood. View settings are temporary; the saved inventory travels with exported profiles.
 
 ## Move profiles between machines
 

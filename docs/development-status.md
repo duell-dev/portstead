@@ -1,4 +1,4 @@
-# Portstead development status — 13 October 2026
+# Portstead development status — 17 October 2026
 
 This is the first implementation, not a production release. The executable embeds the frontend and can run independently of Vite. The application and MCP use the same Rust engine.
 
@@ -22,9 +22,10 @@ The source is published at [duell-dev/portstead](https://github.com/duell-dev/po
 | Hierarchy navigation | Global/focused maps, nested descendants, breadcrumbs, folder creation/rename/move, keyboard selection, pan/zoom, tree search and small-window layouts pass browser checks. Folder transforms preserve targets and agent grants. |
 | HTTP management pages | A native private webview loads a frame-blocking localhost fixture, accepts form input, and denies profile-command access. Workspace and app closure are checked. This is not a test against Moxa hardware. |
 | SNMP device discovery | Native Windows discovery reads a localhost UDP fixture, saves the reviewed inventory without replacing connections/workspaces, saves/reuses/forgets a temporary OS credential profile, and honors cancellation before starting. Rust UDP fixtures separately verify encrypted SNMPv3 and LLDP port/address parsing. |
+| LLDP topology | Pure model tests cover IP/chassis matching, duplicate identities, legacy MAC advertisements, IPv6, reciprocal reports, parallel links, self-loops, rings and stable non-overlapping layouts. Browser fixtures cover filtering, neighborhood focus, keyboard/zoom, escaping, themes, minimum window size and dense-graph table pagination. Native Windows smoke checks saved inventory and device details in the topology view. |
 | RDP negotiation | The authorized test host responded; the untrusted issuer stopped TLS validation before authentication. No credential was sent and no remote desktop session was opened. |
 
-The discovery update adds read-only SNMPv2c/SNMPv3, interface inventory and LLDP neighbor inspection. Local UDP fixtures verify both SHA-1/AES-128 and SHA-256/AES-128 SNMPv3, invalid credentials, non-increasing table indices and cancellation. Browser checks verify review/merge, saved-profile selection, preservation of existing connections and escaped device text. The suite now contains 26 Rust unit tests and nine frontend unit tests, plus the explicit real MCP integration test and browser/native smoke scripts. Re-run the README checks after changes; this document is a dated record.
+The discovery adapter now also reads each switch's local LLDP chassis identity. Local UDP fixtures verify this with SNMPv2c, SHA-1/AES-128 and SHA-256/AES-128 SNMPv3. Old inventory without chassis fields still loads; unknown credential fields and invalid chassis subtypes are rejected. The suite contains 26 Rust unit tests and 15 frontend unit tests, plus the explicit real MCP integration test and browser/native smoke scripts. Re-run the README checks after changes; this document is a dated record.
 
 ## Verified in CI
 
@@ -43,7 +44,8 @@ The [hierarchy/HTTP CI workflow](https://github.com/duell-dev/portstead/actions/
 
 ## Current implementation limits
 
-- SNMP discovery is read-only and limited to 256 explicit targets, eight concurrent devices and 90 seconds per run. SNMPv3 supports SHA-1/SHA-256 with AES-128; there are no SET operations, traps, recursive neighbor queries, background monitoring or discovery MCP tools. LLDP neighbors are shown as dated observations in device details; the hierarchy map is not a physical topology graph. Device refresh matches management IP and SNMP port and does not distinguish overlapping networks. Saved credential profiles are reused by name on one machine.
+- SNMP discovery is read-only and limited to 256 explicit targets, eight concurrent devices and 90 seconds per run. SNMPv3 supports SHA-1/SHA-256 with AES-128; there are no SET operations, traps, recursive neighbor queries, background monitoring or discovery MCP tools. Device refresh matches management IP and SNMP port and does not distinguish overlapping networks. Saved credential profiles are reused by name on one machine.
+- Topology derives connectivity from dated LLDP reports, with no live reachability claim. Address/chassis ambiguity stays unresolved; names do not join devices. Exact port pairs combine reciprocal reports; different port identifiers can leave two reports separate. Unknown sightings remain separate nodes. Above 150 nodes or 300 links, the link table and neighborhood focus replace the global drawing. Real Moxa topology and LLDP-MIB access still need hardware validation. Folder hierarchy remains independent of wiring.
 
 - Management pages use separate private Portstead windows. In-pane browsing, cross-origin navigation/SSO, popups, certificate exceptions and MCP browser control are not implemented. Moxa hardware and HTTP-authentication dialogs remain untested. Browser sessions are private, but there is no per-profile cookie partitioning.
 - Folder hierarchy uses slash-separated paths, supports up to 16 levels and preserves empty folders explicitly. There is no drag-and-drop reparenting. Dense global maps need zoom, focusing or tree navigation; above 300 nodes the layout uses more conservative ring spacing. Updated profiles require the updated app on the receiving machine.
@@ -59,4 +61,4 @@ The [hierarchy/HTTP CI workflow](https://github.com/duell-dev/portstead/actions/
 
 ## Next work
 
-Validate SNMP/LLDP against a non-production device before building a physical topology view from those observations. Exercise the Linux desktop and conduct the RDP/WinRM acceptance tests in CONTRIBUTING.md. Fix protocol failures and introduce bounded PSRP streaming before release packaging. Keep the profile/credential separation and explicit target checks as core behavior.
+Validate local/remote LLDP identities and port pairs against non-production Moxa switches, then compare the topology with known cabling. Exercise the Linux desktop and conduct the RDP/WinRM acceptance tests in CONTRIBUTING.md. Fix protocol failures and introduce bounded PSRP streaming before release packaging. Keep the profile/credential separation and explicit target checks as core behavior.

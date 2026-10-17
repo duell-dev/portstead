@@ -484,10 +484,30 @@ mod tests {
             host: "switch.example.invalid".into(),
             address: "192.0.2.4".into(),
             snmp_port: 161,
+            neighbors: vec![crate::discovery::LldpNeighbor::default()],
             ..crate::discovery::Device::default()
         });
         library.validate().unwrap();
         let mut json = serde_json::to_value(&library).unwrap();
+        json["devices"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("chassis_id");
+        json["devices"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("chassis_subtype");
+        json["devices"][0]["neighbors"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("chassis_subtype");
+        let legacy: Library = serde_json::from_value(json.clone()).unwrap();
+        assert!(legacy.devices[0].chassis_id.is_empty());
+        assert_eq!(legacy.devices[0].neighbors[0].chassis_subtype, 0);
+        legacy.validate().unwrap();
+        library.devices[0].chassis_subtype = 8;
+        assert!(library.validate().is_err());
+        library.devices[0].chassis_subtype = 0;
         json["devices"][0]["community"] = "not-permitted".into();
         assert!(serde_json::from_value::<Library>(json).is_err());
         library.devices[0]

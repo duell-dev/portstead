@@ -168,6 +168,14 @@ try {
   const inventory = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('load_library'));
   assert.equal(inventory.devices.length, 1); assert.equal(inventory.devices[0].group, 'Fixture / Networking');
   assert(inventory.workspaces.some(w => w.name === 'Device workspace'));
+  await page.getByRole('button', { name: 'Topology', exact: true }).click();
+  await page.getByRole('heading', { name: 'Topology', exact: true }).waitFor();
+  assert.equal(await page.locator('[data-topology-node]').count(), 1, 'Native saved inventory reaches topology');
+  assert.equal(await page.locator('[data-topology-edge]').count(), 0, 'No physical links are invented for an isolated device');
+  await page.getByRole('button', { name: 'Device: Native fixture switch', exact: true }).focus(); await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Device details', exact: true }).click();
+  assert.match(await page.getByRole('dialog').innerText(), /127\.0\.0\.1/);
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
   const savedInventory = await readFile(resolve(directory, 'library.json'), 'utf8'); assert(!savedInventory.includes('native-fixture-only'));
   const reused = await page.evaluate(args => window.__TAURI_INTERNALS__.invoke('discover_devices', args), { requestId: crypto.randomUUID(), targets: ['127.0.0.1'], port: snmpServer.address().port, credentials: null, profileName: snmpProfileName, remember: false });
   assert.equal(reused.devices[0].name, 'Native fixture switch');
@@ -180,7 +188,7 @@ try {
   await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('plugin:window|close', { label: 'main' })).catch(error => assert.match(String(error), /Target page, context or browser has been closed/));
   for (let i = 0; i < 50 && app.exitCode === null; i++) await pause(100);
   assert.equal(app.exitCode, 0, 'Closing the main window must also exit management windows');
-  console.log('Native Windows smoke passed: real PTYs, layouts, commands, MCP, cancellation, native HTTP isolation, SNMP UDP discovery, inventory merge, OS credential-profile save/reuse/forget, early discovery cancellation and app exit. Only localhost fixtures were used.');
+  console.log('Native Windows smoke passed: real PTYs, layouts, commands, MCP, cancellation, native HTTP isolation, SNMP UDP discovery, saved-inventory topology, OS credential-profile save/reuse/forget, early discovery cancellation and app exit. Only localhost fixtures were used.');
 } catch (error) {
   if (page) {
     await page.screenshot({ path: '.local/native-failure.png' }).catch(() => {});

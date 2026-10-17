@@ -42,6 +42,8 @@ fn fixture_rows() -> Vec<Row> {
         row(IF_TABLE, &[2, 7], Atom::Bytes(b"Ethernet7".to_vec())),
         row(IF_TABLE, &[7, 7], Atom::Number(1)),
         row(IF_TABLE, &[8, 7], Atom::Number(2)),
+        row(LLDP_LOCAL, &[1, 0], Atom::Number(4)),
+        row(LLDP_LOCAL, &[2, 0], Atom::Bytes(vec![0, 1, 2, 3, 4, 6])),
         row(LLDP_LOCAL_PORTS, &[3, 42], Atom::Bytes(b"Port7".to_vec())),
         row(LLDP_REMOTE, &[4, 20, 42, 1], Atom::Number(4)),
         row(
@@ -205,6 +207,9 @@ async fn reads_real_udp_inventory_and_lldp_in_v2c_and_authenticated_encrypted_v3
         );
         let device = &result.devices[0];
         assert_eq!(device.name, "fixture-switch");
+        assert_eq!(device.chassis_id, "00:01:02:03:04:06");
+        assert_eq!(device.chassis_subtype, 4);
+        assert_eq!(device.neighbors[0].chassis_subtype, 4);
         assert_eq!(device.interfaces[0].index, 7);
         assert_eq!(device.interfaces[0].oper_status, 2);
         assert_eq!(device.neighbors[0].local_port, "Port7");

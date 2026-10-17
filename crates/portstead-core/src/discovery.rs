@@ -13,6 +13,7 @@ use zeroize::Zeroize;
 
 const SYSTEM: &[u64] = &[1, 3, 6, 1, 2, 1, 1];
 const IF_TABLE: &[u64] = &[1, 3, 6, 1, 2, 1, 2, 2, 1];
+const LLDP_LOCAL: &[u64] = &[1, 0, 8802, 1, 1, 2, 1, 3];
 const LLDP_LOCAL_PORTS: &[u64] = &[1, 0, 8802, 1, 1, 2, 1, 3, 7, 1];
 const LLDP_REMOTE: &[u64] = &[1, 0, 8802, 1, 1, 2, 1, 4, 1, 1];
 const LLDP_ADDRESSES: &[u64] = &[1, 0, 8802, 1, 1, 2, 1, 4, 2, 1];
@@ -127,6 +128,8 @@ pub struct DeviceInterface {
 pub struct LldpNeighbor {
     pub local_port: String,
     pub chassis_id: String,
+    #[serde(default)]
+    pub chassis_subtype: u8,
     pub remote_port: String,
     pub name: String,
     pub description: String,
@@ -143,6 +146,10 @@ pub struct Device {
     pub address: String,
     pub snmp_port: u16,
     pub sys_object_id: String,
+    #[serde(default)]
+    pub chassis_id: String,
+    #[serde(default)]
+    pub chassis_subtype: u8,
     pub description: String,
     pub location: String,
     pub contact: String,
@@ -170,6 +177,7 @@ impl Device {
         ensure!(
             [
                 &self.sys_object_id,
+                &self.chassis_id,
                 &self.description,
                 &self.location,
                 &self.contact
@@ -178,6 +186,7 @@ impl Device {
             .all(|s| text_ok(s)),
             "Device metadata is too long"
         );
+        ensure!(self.chassis_subtype <= 7, "Invalid chassis ID subtype");
         ensure!(
             self.interfaces.iter().all(|i| text_ok(&i.name)),
             "Invalid interface name"
@@ -192,6 +201,7 @@ impl Device {
             ]
             .iter()
             .all(|s| text_ok(s))
+                && n.chassis_subtype <= 7
                 && n.addresses.len() <= 16
                 && n.addresses.iter().all(|a| a.parse::<IpAddr>().is_ok())),
             "Invalid LLDP neighbor"
@@ -348,9 +358,9 @@ fn text(atom: &Atom) -> String {
         Atom::Number(n) => n.to_string(),
     }
 }
-fn identifier(atom: &Atom, mac: bool) -> String {
+fn identifier(atom: &Atom, hex: bool) -> String {
     match atom {
-        Atom::Bytes(b) if mac => b
+        Atom::Bytes(b) if hex => b
             .iter()
             .map(|v| format!("{v:02x}"))
             .collect::<Vec<_>>()
@@ -559,6 +569,26 @@ async fn inspect(host: &str, port: u16, credentials: &SnmpCredentials) -> Result
         }
     }
     device.interfaces = interfaces.into_values().collect();
+    // Keep this separate: switches without LLDP must still return system inventory.
+    let local_parts = [1, 2].map(|column| {
+        let mut oid = LLDP_LOCAL.to_vec();
+        oid.extend([column, 0]);
+        oid
+    });
+    let local_oids = local_parts
+        .each_ref()
+        .map(|oid| Oid::from(oid).expect("Static LLDP OID"));
+    match get(&mut session, &local_oids).await {
+        Ok(rows) => {
+            device.chassis_subtype = rows.iter()
+                .find(|(oid, _)| oid == &local_parts[0])
+                .map(|(_, atom)| match number(atom) { value @ 1..=7 => value as u8, _ => 0 }).unwrap_or(0);
+            if let Some((_, atom)) = rows.iter().find(|(oid, _)| oid == &local_parts[1]) {
+                device.chassis_id = identifier(atom, matches!(device.chassis_subtype, 4 | 5));
+            }
+        }
+        Err(_) => device.warnings.push("Local LLDP chassis identity is unavailable; topology matching may need management addresses".into()),
+    }
     let remote = walk(&mut session, LLDP_REMOTE, 2049).await;
     match remote {
         Ok(rows) if !rows.is_empty() => {
@@ -595,7 +625,13 @@ fn neighbors(remote: &[Row], local: &[Row], addresses: &[Row]) -> Vec<LldpNeighb
     let mut ports = BTreeMap::new();
     for (oid, atom) in local {
         if oid.len() == LLDP_LOCAL_PORTS.len() + 2 && oid[LLDP_LOCAL_PORTS.len()] == 3 {
-            ports.insert(oid[LLDP_LOCAL_PORTS.len() + 1], text(atom));
+            let index = oid[LLDP_LOCAL_PORTS.len() + 1];
+            let mac = local.iter().any(|(other, atom)| {
+                other.len() == oid.len()
+                    && other[LLDP_LOCAL_PORTS.len()..] == [2, index]
+                    && number(atom) == 3
+            });
+            ports.insert(index, identifier(atom, mac));
         }
     }
     let mut entries = BTreeMap::<Vec<u64>, BTreeMap<u64, Atom>>::new();
@@ -622,9 +658,15 @@ fn neighbors(remote: &[Row], local: &[Row], addresses: &[Row]) -> Vec<LldpNeighb
                     .unwrap_or_else(|| format!("LLDP port {}", key[1])),
                 ..LldpNeighbor::default()
             };
+            neighbor.chassis_subtype = columns
+                .get(&4)
+                .map(|atom| match number(atom) {
+                    value @ 1..=7 => value as u8,
+                    _ => 0,
+                })
+                .unwrap_or(0);
             if let Some(atom) = columns.get(&5) {
-                neighbor.chassis_id =
-                    identifier(atom, columns.get(&4).is_some_and(|v| number(v) == 4));
+                neighbor.chassis_id = identifier(atom, matches!(neighbor.chassis_subtype, 4 | 5));
             }
             if let Some(atom) = columns.get(&7) {
                 neighbor.remote_port =
@@ -704,7 +746,7 @@ mod tests {
             oid.extend(suffix);
             (oid, atom)
         };
-        let remote = vec![
+        let mut remote = vec![
             row(LLDP_REMOTE, &[4, 17, 42, 1], Atom::Number(4)),
             row(
                 LLDP_REMOTE,
@@ -732,6 +774,23 @@ mod tests {
         assert_eq!(result[0].chassis_id, "00:01:02:03:04:05");
         assert_eq!(result[0].addresses, ["192.0.2.3"]);
         assert_eq!(result[0].name, "neighbor");
+        remote[0].1 = Atom::Number(5);
+        remote[1].1 = Atom::Bytes(vec![1, 192, 0, 2, 8]);
+        let result = neighbors(&remote, &local, &addresses);
+        assert_eq!(result[0].chassis_subtype, 5);
+        assert_eq!(result[0].chassis_id, "01:c0:00:02:08");
+        let local_mac = vec![
+            row(LLDP_LOCAL_PORTS, &[2, 42], Atom::Number(3)),
+            row(
+                LLDP_LOCAL_PORTS,
+                &[3, 42],
+                Atom::Bytes(vec![0, 1, 2, 3, 4, 5]),
+            ),
+        ];
+        assert_eq!(
+            neighbors(&remote, &local_mac, &addresses)[0].local_port,
+            "00:01:02:03:04:05"
+        );
     }
     #[tokio::test]
     async fn cancellation_stops_unresponsive_requests() {
