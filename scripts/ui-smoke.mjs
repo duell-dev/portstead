@@ -227,6 +227,7 @@ try {
   assert.equal(await page.locator('[data-topology-edge]').count(), 5, 'Ring, parallel links and unresolved neighbors remain visible');
   assert.equal(await page.locator('.topology-edge.reciprocal').count(), 1);
   await page.getByRole('button', { name: 'Both ends', exact: true }).click();
+  assert.equal(await page.locator('.port-label[visibility="visible"]').count(), 1, 'Selected links show their ports without unrelated labels crossing them');
   assert.match(await page.locator('#topology-inspector').innerText(), /Matched by management address/);
   await page.locator('.topology-table').getByRole('button', { name: 'Distribution switch', exact: true }).first().click();
   await page.getByRole('button', { name: 'Focus Distribution switch', exact: true }).click();
